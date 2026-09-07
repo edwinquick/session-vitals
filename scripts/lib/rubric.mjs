@@ -12,41 +12,46 @@ export const TIERS = ['healthy', 'watch', 'degraded', 'critical'];
 
 export function scoreVitals(v, probe = null) {
   const signals = [];
-  const add = (key, severity, detail) => { if (severity > 0) signals.push({ key, severity, detail }); };
+  // detail: a full sentence for the report. short: a few words for the one-liner.
+  const add = (key, severity, detail, short) => { if (severity > 0) signals.push({ key, severity, detail, short: short || detail }); };
+  const plural = (n, one, many = one + 's') => `${n} ${n === 1 ? one : many}`;
 
   const pct = v.contextPct;
-  add('context', pct > 0.9 ? 3 : pct > 0.75 ? 2 : pct > 0.55 ? 1 : 0, `context ${Math.round(pct * 100)}% of ${fmtK(v.contextWindow)} (${fmtK(v.contextTokens)})`);
+  const pctStr = `${Math.round(pct * 100)}%`;
+  add('context', pct > 0.9 ? 3 : pct > 0.75 ? 2 : pct > 0.55 ? 1 : 0, `Context is ${pctStr} full (${fmtK(v.contextTokens)} of ${fmtK(v.contextWindow)})`, `context ${pctStr} full`);
 
   const n = v.compactions.length;
   const rc = v.recentCompactions ?? n;
   let compSev = rc >= 3 ? 3 : rc === 2 ? 2 : rc === 1 ? 1 : 0;
   if (n >= 3) compSev = Math.max(compSev, 1);
   if (v.fastRefill || v.thrashing) compSev = Math.min(3, compSev + 1);
-  const compNote = v.thrashing ? ', two within a few prompts of each other (thrashing)' : v.fastRefill ? ', refilled to half the window within a few prompts' : '';
-  add('compaction', compSev, `${rc} compaction${rc === 1 ? '' : 's'} in the last 40 prompts (${n} total)${compNote}`);
+  const compNote = v.thrashing ? ', two of them back to back' : v.fastRefill ? ', and the window refilled to half within a few prompts' : '';
+  add('compaction', compSev, `${plural(rc, 'compaction')} in the last 40 prompts${n > rc ? ` (${n} in total)` : ''}${compNote}`, v.thrashing ? 'compaction thrashing' : v.fastRefill ? 'refilling fast after compaction' : plural(rc, 'recent compaction'));
 
   const r = v.recentErrorRate;
   let errSev = r > 0.6 ? 3 : r > 0.4 ? 2 : r > 0.25 ? 1 : 0;
   if (v.recentToolCalls >= 10 && r - v.overallErrorRate > 0.2) errSev = Math.min(3, errSev + 1);
   if (v.recentToolCalls < 5) errSev = 0;
-  add('tool_errors', errSev, `${Math.round(r * 100)}% of last ${v.recentToolCalls} tool calls failed (session ${Math.round(v.overallErrorRate * 100)}%)`);
+  const rising = v.recentToolCalls >= 10 && r - v.overallErrorRate > 0.2;
+  add('tool_errors', errSev, `${Math.round(r * 100)}% of the last ${v.recentToolCalls} tool calls failed${rising ? `, up from ${Math.round(v.overallErrorRate * 100)}% over the session` : ''}`, `${Math.round(r * 100)}% tool errors${rising ? ' and rising' : ''}`);
 
-  add('retry_loops', v.retryRuns >= 3 ? 3 : v.retryRuns === 2 ? 2 : v.retryRuns === 1 ? 1 : 0, `${v.retryRuns} identical-retry run${v.retryRuns === 1 ? '' : 's'} in recent tool calls`);
+  add('retry_loops', v.retryRuns >= 3 ? 3 : v.retryRuns === 2 ? 2 : v.retryRuns === 1 ? 1 : 0, `${plural(v.retryRuns, 'identical retry loop')} in recent tool calls`, plural(v.retryRuns, 'retry loop'));
 
   const rr = v.rereadFiles.length;
-  add('rereads', rr >= 3 ? 2 : rr >= 1 ? 1 : 0, rr ? `re-read 3+ times: ${v.rereadFiles.map((f) => shortPath(f.file)).join(', ')}` : '');
+  const rrList = v.rereadFiles.slice(0, 2).map((f) => `${shortPath(f.file)} read ${f.count} times`).join(', ') + (rr > 2 ? `, and ${rr - 2} more` : '');
+  add('rereads', rr >= 3 ? 2 : rr >= 1 ? 1 : 0, rr ? `${rrList} recently` : '', plural(rr, 'file re-read'));
 
   const c = v.recentCorrections;
-  add('corrections', c >= 3 ? 3 : c === 2 ? 2 : c === 1 ? 1 : 0, `${c} correction${c === 1 ? '' : 's'} from the user in the last 6 prompts (${v.totalCorrections} total)`);
+  add('corrections', c >= 3 ? 3 : c === 2 ? 2 : c === 1 ? 1 : 0, `You corrected it ${c === 1 ? 'once' : c + ' times'} in the last 6 prompts${v.totalCorrections > c ? ` (${v.totalCorrections} in total)` : ''}`, `${plural(c, 'correction')} in 6 prompts`);
 
   if (v.everProgressed && v.promptsSinceProgress !== null) {
-    add('stalled', v.promptsSinceProgress >= 12 ? 2 : v.promptsSinceProgress >= 6 ? 1 : 0, `${v.promptsSinceProgress} prompts since the last edit or commit`);
+    add('stalled', v.promptsSinceProgress >= 12 ? 2 : v.promptsSinceProgress >= 6 ? 1 : 0, `${v.promptsSinceProgress} prompts since the last edit or commit`, 'no edits lately');
   }
 
-  add('api_errors', v.apiErrors >= 2 ? 1 : 0, `${v.apiErrors} API errors`);
+  add('api_errors', v.apiErrors >= 2 ? 1 : 0, `${plural(v.apiErrors, 'API error')} this session`, plural(v.apiErrors, 'API error'));
 
   if (probe && probe.mismatches !== undefined && probe.stale !== true) {
-    add('probe', probe.mismatches >= 3 ? 3 : probe.mismatches === 2 ? 2 : probe.mismatches === 1 ? 1 : 0, `task-retention probe: ${probe.mismatches} mismatch${probe.mismatches === 1 ? '' : 'es'}${probe.summary ? ' (' + probe.summary + ')' : ''}`);
+    add('probe', probe.mismatches >= 3 ? 3 : probe.mismatches === 2 ? 2 : probe.mismatches === 1 ? 1 : 0, `The retention probe missed ${plural(probe.mismatches, 'item')}${probe.summary ? ': ' + probe.summary : ''}`, `probe missed ${probe.mismatches}`);
   }
 
   const sum = signals.reduce((s, x) => s + x.severity, 0);
@@ -88,33 +93,58 @@ function recommend(tier, sev, v) {
   return { action: 'handoff', why: 'Multiple strong signals. Hand off before the next compaction erases what is still correct.', how: 'Write a handoff doc, then /clear and paste it' };
 }
 
+export const ACTION_LABEL = {
+  continue: 'carry on',
+  compact: 'compact with a focus instruction',
+  handoff: 'hand off to a fresh session',
+  abandon: 'start over from git and the issue',
+};
+
+const DOTS = { 1: '●○○', 2: '●●○', 3: '●●●' };
+
+function sorted(signals) { return signals.slice().sort((a, b) => b.severity - a.severity); }
+
+// The warning line shown to the user by the hooks. One sentence of evidence,
+// one of advice.
 export function formatOneLine(result, v) {
-  const top = result.signals.slice().sort((a, b) => b.severity - a.severity).slice(0, 3).map((s) => `${s.key}:${s.severity}`).join(' ');
-  return `Session vitals: ${result.tier.toUpperCase()} (score ${result.score}) · context ${Math.round(v.contextPct * 100)}% · ${top || 'no signals'} → ${result.recommendation.action}. /vitals for the full readout.`;
+  const top = sorted(result.signals).slice(0, 3).map((s) => s.short).join(' · ');
+  const evidence = top ? `${top[0].toUpperCase()}${top.slice(1)}.` : `Context ${Math.round(v.contextPct * 100)}% full, nothing else showing.`;
+  return `Session vitals: ${result.tier}. ${evidence} Suggest: ${ACTION_LABEL[result.recommendation.action]}. /vitals for details.`;
 }
 
 export function formatReport(result, v, state = {}) {
   const lines = [];
-  lines.push(`SESSION VITALS  tier=${result.tier}  score=${result.score}  action=${result.recommendation.action}`);
+  const action = result.recommendation.action;
+  lines.push(`SESSION VITALS: ${result.tier} → ${ACTION_LABEL[action]}`);
   lines.push('');
-  lines.push(`Context     ${fmtK(v.contextTokens)} / ${fmtK(v.contextWindow)} (${Math.round(v.contextPct * 100)}%), peak ${fmtK(v.peakContextTokens)}`);
-  lines.push(`Session     ${v.prompts} prompts, ${v.toolCalls} tool calls, ${v.elapsedMinutes ?? '?'} min, ${v.compactions.length} compaction(s)${v.thrashing ? ' THRASHING' : ''}`);
-  lines.push(`Errors      recent ${Math.round(v.recentErrorRate * 100)}% vs session ${Math.round(v.overallErrorRate * 100)}%, ${v.retryRuns} retry run(s), ${v.apiErrors} API error(s)`);
-  lines.push(`Corrections ${v.recentCorrections} in last 6 prompts, ${v.totalCorrections} total`);
-  lines.push(`Progress    ${v.everProgressed ? v.promptsSinceProgress + ' prompt(s) since last edit/commit, ' + v.editedFiles.length + ' file(s) edited' : 'no edits or commits yet'}`);
-  if (v.rereadFiles.length) lines.push(`Re-reads    ${v.rereadFiles.map((f) => `${shortPath(f.file)}×${f.count}`).join(', ')}`);
+  if (result.signals.length) {
+    lines.push("What's showing");
+    for (const s of sorted(result.signals)) lines.push(`  ${DOTS[s.severity]}  ${s.detail}`);
+  } else {
+    lines.push(`Nothing showing. Context ${Math.round(v.contextPct * 100)}% full (${fmtK(v.contextTokens)} of ${fmtK(v.contextWindow)}).`);
+  }
+  if (action !== 'continue' || result.tier !== 'healthy') {
+    lines.push('');
+    lines.push(`Why ${ACTION_LABEL[action].split(' ')[0] === 'carry' ? 'carry on' : ACTION_LABEL[action].replace(/ (with|to|from).*$/, '')}`);
+    lines.push(`  ${result.recommendation.why}`);
+    if (result.recommendation.how) lines.push(`  Next: ${result.recommendation.how}`);
+  }
+  if (state.pins?.length) {
+    lines.push('');
+    lines.push(`Pinned constraints (${state.pins.length})`);
+    for (const p of state.pins) lines.push(`  • ${p.text}`);
+  }
+  if (state.probe && !state.probe.stale) {
+    lines.push('');
+    lines.push(`Last retention probe: ${state.probe.mismatches === 0 ? 'all consistent' : plural2(state.probe.mismatches, 'item') + ' missed'}, at prompt ${state.probe.promptIndex}`);
+  }
   lines.push('');
-  lines.push('Signals');
-  if (!result.signals.length) lines.push('  none');
-  for (const s of result.signals.sort((a, b) => b.severity - a.severity)) lines.push(`  [${s.severity}] ${s.key}: ${s.detail}`);
-  lines.push('');
-  lines.push(`Recommendation: ${result.recommendation.action.toUpperCase()}`);
-  lines.push(`  ${result.recommendation.why}`);
-  if (result.recommendation.how) lines.push(`  How: ${result.recommendation.how}`);
-  if (state.pins?.length) { lines.push(''); lines.push(`Pinned constraints (${state.pins.length})`); for (const p of state.pins) lines.push(`  - ${p.text}`); }
-  if (state.probe && !state.probe.stale) { lines.push(''); lines.push(`Last probe: ${state.probe.mismatches} mismatch(es) at prompt ${state.probe.promptIndex}${state.probe.summary ? ' (' + state.probe.summary + ')' : ''}`); }
+  const files = v.editedFiles.length;
+  lines.push(`Session: ${v.prompts} prompts · ${v.toolCalls} tool calls · ${v.elapsedMinutes ?? '?'} min · ${plural2(v.compactions.length, 'compaction')} · ${files ? plural2(files, 'file') + ' edited' : 'nothing edited yet'}`);
   return lines.join('\n');
 }
+
+function plural2(n, one, many = one + 's') { return `${n} ${n === 1 ? one : many}`; }
 
 function fmtK(n) { return n >= 1000 ? Math.round(n / 1000) + 'k' : String(n); }
 function shortPath(p) { const parts = String(p).split('/'); return parts.slice(-2).join('/'); }

@@ -100,7 +100,7 @@ function onUserPrompt(input, state, config) {
         systemMessage: line,
         hookSpecificOutput: {
           hookEventName: 'UserPromptSubmit',
-          additionalContext: `[session-vitals] ${line} Recommended action: ${result.recommendation.action}. ${result.recommendation.why}${result.recommendation.action === 'continue' ? '' : ' Finish the user\'s current request first, then tell the user this recommendation in one sentence.'}`,
+          additionalContext: `[session-vitals] ${line} ${result.recommendation.why}${result.recommendation.action === 'continue' ? '' : ' Finish the user\'s current request first, then pass this suggestion on in one sentence.'}`,
         },
       };
       state.lastReport = { tier: result.tier, score: result.score, action: result.recommendation.action, promptIndex: vitals.prompts, promptCount: state.promptCount, ts: new Date().toISOString() };
