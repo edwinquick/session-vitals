@@ -23,7 +23,7 @@ async function main() {
   const state = loadState(input.session_id) || newState(input);
   state.transcriptPath = input.transcript_path || state.transcriptPath;
   state.cwd = input.cwd || state.cwd;
-  if (input.model) { state.model = input.model; state.contextWindow = newState(input).contextWindow; }
+  if (input.model) { state.model = input.model; state.contextWindow = Math.max(state.contextWindow || 0, newState(input).contextWindow); }
 
   switch (event) {
     case 'SessionStart': return onSessionStart(input, state);

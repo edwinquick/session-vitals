@@ -146,6 +146,14 @@ test('formatters produce a one-liner and a report', () => {
   assert.match(rep, /Pinned constraints \(1\)/);
 });
 
+test('window is inferred as 1M when the session has already exceeded 200k', () => {
+  const b = new TranscriptBuilder();
+  b.prompt('Long session.').setContext(450_000).assistantText();
+  const v = computeVitals(parseTranscriptText(b.text()), { contextWindow: 200_000 });
+  assert.equal(v.contextWindow, 1_000_000);
+  assert.ok(v.contextPct < 0.5);
+});
+
 test('research session with no edits is not penalized for stalling', () => {
   const b = new TranscriptBuilder();
   b.prompt('Explain how the auth flow works.');
