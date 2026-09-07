@@ -23,7 +23,11 @@ const CORRECTION_ANYWHERE_RE = /(your context is stale|you(?:'re| are) (?:confus
 const CORRECTION_SHORT_NOT_RE = /^.{1,20}\bnot\b.{1,20}$/i;
 // Openers that look like "no" but are not corrections.
 const NOT_A_CORRECTION_RE = /^(?:no (?:worries|problem|rush|stress|need|hurry)|nope,? (?:all good|that'?s fine))/i;
-const CONSTRAINT_RE = /\b(never|always|do not|don'?t|must|must not|only|without|no matter what|under no circumstances)\b/i;
+// A constraint is a short imperative addressed to the agent. Sentences that
+// merely contain "only" or "without", or that carry markdown, code, or
+// closing tags, are report prose and not rules.
+const CONSTRAINT_RE = /^(never|always|do not|don'?t|must|no matter what|under no circumstances|please (?:never|always|do not|don'?t))\b|(?:^|\b(?:you|please|and|but|also)\s+)(?:must not|must never|should never|never|do not|don'?t) (?:ever )?[a-z]/i;
+const NOT_A_CONSTRAINT_RE = /[`*<>{}|]|^\s*[-#\d.)]|\bI (?:did|applied|found|checked|ran)\b|\bwas\b|\bwere\b|\bis\b .*\bonly\b/i;
 const PROGRESS_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 const READ_TOOLS = new Set(['Read']);
 
@@ -44,9 +48,10 @@ export function extractConstraintCandidates(text) {
   const out = [];
   for (const rawLine of text.split(/\n|(?<=[.!])\s+/)) {
     const line = rawLine.trim();
-    if (line.length < 12 || line.length > 300) continue;
+    if (line.length < 12 || line.length > 160) continue;
     if (!CONSTRAINT_RE.test(line)) continue;
     if (/\?$/.test(line)) continue;
+    if (NOT_A_CONSTRAINT_RE.test(line)) continue;
     out.push(line);
   }
   return out;

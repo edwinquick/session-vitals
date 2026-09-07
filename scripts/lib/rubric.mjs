@@ -46,7 +46,7 @@ export function scoreVitals(v, probe = null) {
   add('api_errors', v.apiErrors >= 2 ? 1 : 0, `${v.apiErrors} API errors`);
 
   if (probe && probe.mismatches !== undefined && probe.stale !== true) {
-    add('probe', probe.mismatches >= 2 ? 3 : probe.mismatches === 1 ? 2 : 0, `task-retention probe: ${probe.mismatches} mismatch${probe.mismatches === 1 ? '' : 'es'}${probe.summary ? ' (' + probe.summary + ')' : ''}`);
+    add('probe', probe.mismatches >= 3 ? 3 : probe.mismatches === 2 ? 2 : probe.mismatches === 1 ? 1 : 0, `task-retention probe: ${probe.mismatches} mismatch${probe.mismatches === 1 ? '' : 'es'}${probe.summary ? ' (' + probe.summary + ')' : ''}`);
   }
 
   const sum = signals.reduce((s, x) => s + x.severity, 0);

@@ -62,27 +62,38 @@ function onSessionStart(input, state) {
 
 function onUserPrompt(input, state, config) {
   const text = String(input.user_prompt || input.prompt || '');
+  // Task notifications from background agents, slash-command records and
+  // system reminders arrive through this hook too. They are not the human
+  // speaking: they must not become the baseline, pins, or a counted prompt.
+  if (!text.trim() || text.trimStart().startsWith('<')) { saveState(state); return; }
+  const isSlash = text.trimStart().startsWith('/');
   state.promptCount = (state.promptCount || 0) + 1;
-  if (!state.baseline && text.trim() && !text.trimStart().startsWith('/')) {
+  if (!state.baseline && !isSlash) {
     state.baseline = { task: text.slice(0, 4000), ts: new Date().toISOString() };
   }
   // Auto-capture constraint-shaped statements from the human. Marked as
   // source=auto so the skill can show them and the user can prune them.
-  for (const c of extractConstraintCandidates(text)) {
-    if (state.pins.some((p) => p.text === c)) continue;
-    state.pins.push({ text: c, source: 'auto', ts: new Date().toISOString() });
+  if (!isSlash) {
+    for (const c of extractConstraintCandidates(text)) {
+      if (state.pins.some((p) => p.text === c)) continue;
+      state.pins.push({ text: c, source: 'auto', ts: new Date().toISOString() });
+    }
   }
   const manual = state.pins.filter((p) => p.source !== 'auto');
   const auto = state.pins.filter((p) => p.source === 'auto').slice(-MAX_AUTO_PINS);
   state.pins = [...manual, ...auto];
 
-  const due = state.promptCount % REPORT_EVERY === 0;
   const measured = measure(state, config);
   let out = null;
   if (measured) {
     const { result, vitals } = measured;
-    const worsened = state.lastReport && TIER_RANK[result.tier] > TIER_RANK[state.lastReport.tier];
-    const crossedDegraded = TIER_RANK[result.tier] >= 2 && (!state.lastReport || TIER_RANK[state.lastReport.tier] < 2);
+    const prev = state.lastReport;
+    const worsened = prev && TIER_RANK[result.tier] > TIER_RANK[prev.tier];
+    const crossedDegraded = TIER_RANK[result.tier] >= 2 && (!prev || TIER_RANK[prev.tier] < 2);
+    // Routine readouts only when there is something to say, and never the
+    // same tier and action twice inside one cadence window.
+    const due = state.promptCount % REPORT_EVERY === 0 && result.tier !== 'healthy'
+      && !(prev && prev.tier === result.tier && prev.action === result.recommendation.action && state.promptCount - (prev.promptCount || 0) < REPORT_EVERY);
     if (due || worsened || crossedDegraded) {
       const line = formatOneLine(result, vitals);
       out = {
@@ -92,7 +103,7 @@ function onUserPrompt(input, state, config) {
           additionalContext: `[session-vitals] ${line} Recommended action: ${result.recommendation.action}. ${result.recommendation.why}${result.recommendation.action === 'continue' ? '' : ' Finish the user\'s current request first, then tell the user this recommendation in one sentence.'}`,
         },
       };
-      state.lastReport = { tier: result.tier, score: result.score, action: result.recommendation.action, promptIndex: vitals.prompts, ts: new Date().toISOString() };
+      state.lastReport = { tier: result.tier, score: result.score, action: result.recommendation.action, promptIndex: vitals.prompts, promptCount: state.promptCount, ts: new Date().toISOString() };
     }
   }
   saveState(state);
@@ -112,7 +123,7 @@ function onStop(input, state, config) {
   const worsened = prev && TIER_RANK[result.tier] > TIER_RANK[prev.tier];
   const firstDegraded = !prev && TIER_RANK[result.tier] >= 2;
   if (worsened || firstDegraded) {
-    state.lastReport = { tier: result.tier, score: result.score, action: result.recommendation.action, promptIndex: vitals.prompts, ts: new Date().toISOString() };
+    state.lastReport = { tier: result.tier, score: result.score, action: result.recommendation.action, promptIndex: vitals.prompts, promptCount: state.promptCount, ts: new Date().toISOString() };
     saveState(state);
     // Stop: user-facing warning only. No additionalContext, so the model is
     // not nudged into another turn by its own monitor.

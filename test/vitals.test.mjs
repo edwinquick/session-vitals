@@ -102,11 +102,18 @@ test('heavy context with no memory signals recommends compact', () => {
 test('probe mismatches escalate the recommendation', () => {
   const { v } = run(healthySession());
   const r0 = scoreVitals(v, null);
-  const r2 = scoreVitals(v, { mismatches: 2, stale: false });
   assert.equal(r0.tier, 'healthy');
-  assert.equal(r2.tier, 'critical');
-  assert.equal(r2.recommendation.action, 'abandon');
-  const stale = scoreVitals(v, { mismatches: 2, stale: true });
+  // One mismatch alone must not make a healthy session degraded: a task
+  // paraphrase scored low once and produced four false handoff warnings.
+  const r1 = scoreVitals(v, { mismatches: 1, stale: false });
+  assert.equal(r1.tier, 'healthy');
+  const r2 = scoreVitals(v, { mismatches: 2, stale: false });
+  assert.equal(r2.tier, 'degraded');
+  assert.equal(r2.recommendation.action, 'handoff');
+  const r3 = scoreVitals(v, { mismatches: 3, stale: false });
+  assert.equal(r3.tier, 'critical');
+  assert.equal(r3.recommendation.action, 'abandon');
+  const stale = scoreVitals(v, { mismatches: 3, stale: true });
   assert.equal(stale.tier, 'healthy');
 });
 
@@ -134,6 +141,17 @@ test('correction and constraint detectors', () => {
   assert.ok(!isCorrection('does 1417 matter, we have the same docker setup here on this machine correct?'));
   const c = extractConstraintCandidates('Fix the parser. Never edit generated files. Do you want tests?\nAlways run lint before committing.');
   assert.deepEqual(c, ['Never edit generated files.', 'Always run lint before committing.']);
+  assert.deepEqual(extractConstraintCandidates('Fix the flaky auth test. Do not touch the database schema.'), ['Do not touch the database schema.']);
+  assert.deepEqual(extractConstraintCandidates("Please don't push to main, and you must not touch the schema."), ["Please don't push to main, and you must not touch the schema."]);
+  // Report prose from a subagent that leaked in through a task notification. None of it is a rule.
+  for (const junk of [
+    '**Labeling.** I applied `bug` only.',
+    'The audit was read-only throughout, and the working tree is untouched.</result>',
+    'Exports 2 of the 4 contracts; `riderRideInPublish` and `curatedDestinationsPublish` are reachable only by deep path.',
+    'They never assert the parsed output, so the default is untested.',
+    'Has no card on the dashboard index; reachable only by deep link from a claim detail page.',
+    'PostgrestError objects survive, Errors do not, so the logs are silently lossy for the hardest bugs.',
+  ]) assert.deepEqual(extractConstraintCandidates(junk), [], junk);
 });
 
 test('formatters produce a one-liner and a report', () => {

@@ -110,9 +110,11 @@ function scoreProbe(answers, state, vitals) {
   let mismatches = 0;
 
   const baseline = state.baseline?.task || vitals.firstPrompt || '';
-  const overlap = jaccard(contentWords(baseline), contentWords(answers.task || ''));
+  // Overlap coefficient, not Jaccard: a long, detailed paraphrase of a short
+  // request must pass as long as it carries the request's key words.
+  const overlap = overlapCoefficient(contentWords(baseline), contentWords(answers.task || ''));
   if (!baseline) details.push('no baseline task on record yet (the first non-slash prompt becomes it), so task recall was not scored');
-  else if (overlap < 0.12) { mismatches++; details.push(`task statement barely overlaps the original request (overlap ${overlap.toFixed(2)})`); }
+  else if (overlap < 0.25) { mismatches++; details.push(`task statement barely overlaps the original request (overlap ${overlap.toFixed(2)})`); }
 
   const pins = state.pins.filter((p) => p.source === 'manual').map((p) => p.text);
   const said = (answers.constraints || []).map((s) => contentWords(String(s)));
@@ -148,6 +150,11 @@ function jaccard(a, b) {
   if (!a.size || !b.size) return 0;
   let inter = 0; for (const w of a) if (b.has(w)) inter++;
   return inter / (a.size + b.size - inter);
+}
+function overlapCoefficient(a, b) {
+  if (!a.size || !b.size) return 0;
+  let inter = 0; for (const w of a) if (b.has(w)) inter++;
+  return inter / Math.min(a.size, b.size);
 }
 
 try { run(); } catch (err) { process.stderr.write(`vitals: ${err.message}\n`); process.exit(1); }

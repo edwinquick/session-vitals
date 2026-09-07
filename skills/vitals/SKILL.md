@@ -6,6 +6,8 @@ argument-hint: "[report | probe | pin <constraint> | pins | unpin <n>]"
 
 # Session vitals
 
+**Main session only.** If you are a subagent (you were spawned by an Agent tool, or your instructions came from another agent rather than the human), stop here and reply "session-vitals: not applicable to subagents". Subagents have their own fresh window, the hooks do not measure them, and the CLI would write your answers into the parent session's record.
+
 You are running a cognitive screen on this session. Two layers, in this order:
 
 1. **Informant** (the transcript, which you cannot bias): tool error rates, identical retries, repeated file reads, user corrections, prompts since the last edit, context fill, compaction count and thrashing.
