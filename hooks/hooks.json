@@ -1,0 +1,17 @@
+{
+  "description": "session-vitals: informant-layer measurement of context decline, constraint pinning across compaction.",
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [ { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.mjs\"", "timeout": 20 } ] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.mjs\"", "timeout": 25 } ] }
+    ],
+    "PreCompact": [
+      { "hooks": [ { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.mjs\"", "timeout": 20 } ] }
+    ],
+    "Stop": [
+      { "hooks": [ { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.mjs\"", "timeout": 25 } ] }
+    ]
+  }
+}

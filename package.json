@@ -1,0 +1,14 @@
+{
+  "name": "session-vitals",
+  "version": "0.1.0",
+  "description": "Cognitive-screening for Claude Code sessions: detect context decline, pin constraints across compaction, decide continue / compact / hand off / abandon.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Ed Quick",
+  "repository": { "type": "git", "url": "https://github.com/edwinquick/session-vitals" },
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "test": "node --test",
+    "report": "node scripts/vitals-cli.mjs report"
+  }
+}

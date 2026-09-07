@@ -1,0 +1,17 @@
+{
+  "name": "session-vitals",
+  "owner": { "name": "Ed Quick" },
+  "metadata": {
+    "description": "Single-plugin marketplace for session-vitals.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "session-vitals",
+      "source": "./",
+      "description": "Measures context decline in a Claude Code session and recommends continue, compact, hand off, or abandon.",
+      "version": "0.1.0",
+      "category": "workflow"
+    }
+  ]
+}
