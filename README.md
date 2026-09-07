@@ -8,7 +8,7 @@
 ![dependencies: 0](https://img.shields.io/badge/dependencies-0-lightgrey)
 
 ```
-Session vitals: DEGRADED (score 8) · context 83% · context:2 retry_loops:2 corrections:2 → handoff. /vitals for the full readout.
+Session vitals: degraded. Context 83% full · 2 retry loops · 2 corrections in 6 prompts. Suggest: hand off to a fresh session. /vitals for details.
 ```
 
 ## The problem
@@ -72,29 +72,26 @@ Needs Node 20 or newer on `PATH`. No dependencies.
 Mostly you do nothing. A one-line readout appears when the tier worsens, and every five prompts as a routine check. When it says something other than `continue`, run `/vitals` for the full screen:
 
 ```
-SESSION VITALS  tier=degraded  score=8  action=handoff
+SESSION VITALS: degraded → hand off to a fresh session
 
-Context     167k / 200k (83%), peak 167k
-Session     3 prompts, 12 tool calls, 9 min, 0 compaction(s)
-Errors      recent 33% vs session 33%, 2 retry run(s), 0 API error(s)
-Corrections 2 in last 6 prompts, 2 total
-Progress    2 prompt(s) since last edit/commit, 1 file(s) edited
-Re-reads    src/auth.test.ts×6
+What's showing
+  ●●○  Context is 83% full (167k of 200k)
+  ●●○  2 identical retry loops in recent tool calls
+  ●●○  You corrected it 2 times in the last 6 prompts
+  ●○○  33% of the last 12 tool calls failed
+  ●○○  src/auth.test.ts read 6 times recently
 
-Signals
-  [2] context: context 83% of 200k (167k)
-  [2] retry_loops: 2 identical-retry runs in recent tool calls
-  [2] corrections: 2 corrections from the user in the last 6 prompts (2 total)
-  [1] tool_errors: 33% of last 12 tool calls failed (session 33%)
-  [1] rereads: re-read 3+ times: src/auth.test.ts
-
-Recommendation: HANDOFF
+Why hand off
   Signals point at lost understanding rather than a full window. A fresh session with a handoff doc is cheaper than re-correcting this one.
-  How: Write a handoff doc, then /clear and paste it
+  Next: Write a handoff doc, then /clear and paste it
 
 Pinned constraints (1)
-  - Do not touch the database schema.
+  • Do not touch the database schema.
+
+Session: 3 prompts · 12 tool calls · 9 min · 0 compactions · 1 file edited
 ```
+
+A healthy session says only `SESSION VITALS: healthy → carry on`, the context fill, and the session line.
 
 The skill then runs the retention probe, re-scores, and carries out the action: it drafts the `/compact` instruction, writes the handoff document, or lists the durable artifacts for a restart.
 
@@ -111,6 +108,12 @@ From a shell, against any transcript:
 
 ```bash
 node scripts/vitals-cli.mjs report --transcript ~/.claude/projects/<project>/<session>.jsonl
+```
+
+To see every warning a finished session would have produced, prompt by prompt, replay it through the hooks:
+
+```bash
+node scripts/replay.mjs ~/.claude/projects/<project>/<session>.jsonl --window 1000000
 ```
 
 ## Configuration

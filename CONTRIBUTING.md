@@ -6,8 +6,8 @@ Thanks for looking. This project lives or dies on whether its thresholds match s
 
 Open an issue with:
 
-1. The one-line readout you saw (`Session vitals: ... → action`).
-2. The output of `node scripts/vitals-cli.mjs report --json --transcript <path>`, with file paths and prompt text redacted as you see fit. The `vitals` block is what matters.
+1. The one-line readout you saw (`Session vitals: <tier>. ... Suggest: ...`).
+2. The output of `node scripts/vitals-cli.mjs report --json --transcript <path>`, with file paths and prompt text redacted as you see fit. The `vitals` block is what matters. `node scripts/replay.mjs <path>` shows every warning the session would have produced, which is often the quickest way to see where a threshold misfired.
 3. What you think the right call was, and why. "It said handoff but I compacted and the session was fine for another two hours" is exactly the evidence needed.
 
 Do not attach a raw transcript. They contain your prompts, your file contents, and your tool output.

@@ -37,8 +37,8 @@ test('hooks: session start, prompts, report cadence, pins survive compaction', (
   // already degraded, so crossing into that tier reports at once regardless of cadence.
   let out = hook(env, { ...base, hook_event_name: 'UserPromptSubmit', user_prompt: 'Fix the flaky auth test. Do not touch the database schema.' });
   let json = JSON.parse(out);
-  assert.match(json.systemMessage, /Session vitals: (DEGRADED|CRITICAL)/);
-  assert.match(json.hookSpecificOutput.additionalContext, /Recommended action/);
+  assert.match(json.systemMessage, /^Session vitals: (degraded|critical)\. .*Suggest: hand off to a fresh session\./);
+  assert.match(json.hookSpecificOutput.additionalContext, /^\[session-vitals\] Session vitals: .*Finish the user's current request first/);
   let state = JSON.parse(fs.readFileSync(path.join(dir, 'sessions', 'abc.json'), 'utf8'));
   assert.equal(state.baseline.task, 'Fix the flaky auth test. Do not touch the database schema.');
   assert.deepEqual(state.pins.map((p) => p.text), ['Do not touch the database schema.']);
@@ -93,8 +93,8 @@ test('probe: good answers pass, bad answers register mismatches and change the t
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /PROBE RESULT: 3 mismatch/);
   const rep = cli(env, ['report'], '/tmp/proj2');
-  assert.match(rep.stdout, /tier=critical/);
-  assert.match(rep.stdout, /action=abandon/);
+  assert.match(rep.stdout, /^SESSION VITALS: critical → start over from git and the issue/);
+  assert.match(rep.stdout, /The retention probe missed 3 items/);
 });
 
 test('task notifications and slash commands are not prompts: no baseline, no pins, no count', () => {

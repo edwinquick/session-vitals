@@ -157,11 +157,19 @@ test('correction and constraint detectors', () => {
 test('formatters produce a one-liner and a report', () => {
   const { v, r } = run(degradedSession());
   const line = formatOneLine(r, v);
-  assert.match(line, /Session vitals: (DEGRADED|CRITICAL)/);
-  assert.match(line, /\/vitals/);
+  assert.match(line, /^Session vitals: (degraded|critical)\. /);
+  assert.match(line, /Suggest: hand off to a fresh session\. \/vitals for details\.$/);
+  assert.ok(!/[a-z_]+:\d/.test(line), 'no key:severity tokens in the user-facing line');
   const rep = formatReport(r, v, { pins: [{ text: 'Do not touch the schema', source: 'manual' }] });
-  assert.match(rep, /Recommendation:/);
-  assert.match(rep, /Pinned constraints \(1\)/);
+  assert.match(rep, /^SESSION VITALS: (degraded|critical) → hand off to a fresh session/);
+  assert.match(rep, /What's showing\n  ●●○  /);
+  assert.match(rep, /You corrected it 2 times in the last 6 prompts/);
+  assert.match(rep, /Why hand off\n/);
+  assert.match(rep, /Pinned constraints \(1\)\n  • Do not touch the schema/);
+  assert.match(rep, /Session: 3 prompts · 12 tool calls/);
+  const { v: hv, r: hr } = run(healthySession());
+  const healthy = formatReport(hr, hv, {});
+  assert.match(healthy, /^SESSION VITALS: healthy → carry on\n\nNothing showing\./);
 });
 
 test('window is inferred as 1M when the session has already exceeded 200k', () => {
