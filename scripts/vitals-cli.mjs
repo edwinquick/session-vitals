@@ -111,7 +111,8 @@ function scoreProbe(answers, state, vitals) {
 
   const baseline = state.baseline?.task || vitals.firstPrompt || '';
   const overlap = jaccard(contentWords(baseline), contentWords(answers.task || ''));
-  if (baseline && overlap < 0.12) { mismatches++; details.push(`task statement barely overlaps the original request (overlap ${overlap.toFixed(2)})`); }
+  if (!baseline) details.push('no baseline task on record yet (the first non-slash prompt becomes it), so task recall was not scored');
+  else if (overlap < 0.12) { mismatches++; details.push(`task statement barely overlaps the original request (overlap ${overlap.toFixed(2)})`); }
 
   const pins = state.pins.filter((p) => p.source === 'manual').map((p) => p.text);
   const said = (answers.constraints || []).map((s) => contentWords(String(s)));
@@ -131,7 +132,7 @@ function scoreProbe(answers, state, vitals) {
 function formatProbe(s, state, vitals) {
   const out = [`PROBE RESULT: ${s.mismatches} mismatch(es)`];
   for (const d of s.details) out.push(`  - ${d}`);
-  if (!s.details.length) out.push('  task, constraints, files and corrections all consistent with the record');
+  if (!s.mismatches) out.push('  task, constraints, files and corrections all consistent with the record');
   if (s.missingPins.length) { out.push('  Pins not recalled (now re-shown):'); for (const p of s.missingPins) out.push(`    - ${p}`); }
   if (s.missedFiles.length) out.push(`  Edited files not recalled: ${s.missedFiles.join(', ')}`);
   out.push(`  Original request (first ${Math.min(300, (state.baseline?.task || '').length)} chars): ${(state.baseline?.task || vitals.firstPrompt || '').slice(0, 300)}`);

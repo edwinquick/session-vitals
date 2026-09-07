@@ -93,6 +93,43 @@ test('probe: good answers pass, bad answers register mismatches and change the t
   assert.match(rep.stdout, /action=abandon/);
 });
 
+test('CLI finds state written under CLAUDE_PLUGIN_DATA even without that variable', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'session-vitals-'));
+  const pluginData = path.join(dir, 'plugin-data');
+  const transcript = path.join(dir, 't.jsonl');
+  fs.writeFileSync(transcript, healthySession().text());
+  const hookEnv = { ...process.env, CLAUDE_PLUGIN_DATA: pluginData, HOME: dir };
+  delete hookEnv.SESSION_VITALS_HOME;
+  const base = { session_id: 'pd1', transcript_path: transcript, cwd: '/tmp/proj3' };
+  hook(hookEnv, { ...base, hook_event_name: 'SessionStart', startup_reason: 'startup' });
+  hook(hookEnv, { ...base, hook_event_name: 'UserPromptSubmit', user_prompt: 'Add a retry to the upload client.' });
+  assert.ok(fs.existsSync(path.join(pluginData, 'sessions', 'pd1.json')));
+
+  // The CLI shell has neither variable. It must still find the state through ~/.claude/plugins/data/session-vitals*.
+  fs.mkdirSync(path.join(dir, '.claude', 'plugins', 'data'), { recursive: true });
+  fs.renameSync(pluginData, path.join(dir, '.claude', 'plugins', 'data', 'session-vitals-inline'));
+  const cliEnv = { ...process.env, HOME: dir };
+  delete cliEnv.SESSION_VITALS_HOME; delete cliEnv.CLAUDE_PLUGIN_DATA;
+  const pin = cli(cliEnv, ['pin', 'Keep the public API stable'], '/tmp/proj3');
+  assert.equal(pin.status, 0, pin.stderr);
+  const state = JSON.parse(fs.readFileSync(path.join(dir, '.claude', 'plugins', 'data', 'session-vitals-inline', 'sessions', 'pd1.json'), 'utf8'));
+  assert.ok(state.pins.some((p) => p.text === 'Keep the public API stable'), 'pin written back to the file it was loaded from');
+  assert.ok(!('__path' in state) && !Object.keys(state).some((k) => k.includes('path') && k !== 'transcriptPath'), 'no private path leaked into JSON');
+});
+
+test('1M window is detected from the settings file when the model id lacks the suffix', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'session-vitals-'));
+  fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.claude', 'settings.json'), JSON.stringify({ model: 'claude-fable-5-1[1m]' }));
+  const transcript = path.join(dir, 't.jsonl');
+  fs.writeFileSync(transcript, healthySession().text());
+  const env = { ...process.env, HOME: dir, SESSION_VITALS_HOME: path.join(dir, 'sv') };
+  delete env.SESSION_VITALS_CONTEXT_WINDOW;
+  hook(env, { session_id: 'w1', transcript_path: transcript, cwd: '/tmp/proj4', model: 'claude-fable-5-1', hook_event_name: 'SessionStart', startup_reason: 'startup' });
+  const state = JSON.parse(fs.readFileSync(path.join(dir, 'sv', 'sessions', 'w1.json'), 'utf8'));
+  assert.equal(state.contextWindow, 1_000_000);
+});
+
 test('hook never fails the session on garbage input', () => {
   const { env } = sandbox();
   const r = spawnSync('node', [HOOK], { input: 'not json', env, encoding: 'utf8' });

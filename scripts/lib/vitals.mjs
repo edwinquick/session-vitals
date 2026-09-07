@@ -79,6 +79,9 @@ export function computeVitals(events, opts = {}) {
 
   const contextTokens = usages.length ? usages[usages.length - 1].contextTokens : 0;
   const peakContextTokens = usages.reduce((m, u) => Math.max(m, u.contextTokens), 0);
+  // The hook payload does not always carry a model id. If the session has
+  // already held more than the assumed window, it must be a 1M-window model.
+  if (peakContextTokens > o.contextWindow) o.contextWindow = 1_000_000;
   const contextPct = o.contextWindow ? contextTokens / o.contextWindow : 0;
 
   const recentTools = toolUses.slice(-o.recentToolWindow);

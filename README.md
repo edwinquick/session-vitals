@@ -118,8 +118,8 @@ node scripts/vitals-cli.mjs report --transcript ~/.claude/projects/<project>/<se
 | Variable | Default | Meaning |
 |---|---|---|
 | `SESSION_VITALS_REPORT_EVERY` | `5` | prompts between routine readouts |
-| `SESSION_VITALS_CONTEXT_WINDOW` | detected | window size in tokens; `[1m]` in the model id means 1,000,000, otherwise 200,000 |
-| `SESSION_VITALS_HOME` | plugin data dir, else `~/.claude/session-vitals` | where per-session state lives |
+| `SESSION_VITALS_CONTEXT_WINDOW` | detected | window size in tokens. Detected as 1,000,000 when the model id or the `model` in a Claude settings file carries `[1m]`, or once the session has held more than 200k tokens; otherwise 200,000 |
+| `SESSION_VITALS_HOME` | plugin data dir, else `~/.claude/session-vitals` | where per-session state lives. The CLI also searches `~/.claude/plugins/data/session-vitals*`, so it finds hook state without this being set |
 
 Window thresholds (`recentToolWindow`, `recentPromptWindow`, `thrashRefillFraction`, `thrashWithinPrompts`, `recentCompactionPrompts`) can be overridden in `config.json` under that directory.
 
