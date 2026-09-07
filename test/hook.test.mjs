@@ -43,11 +43,15 @@ test('hooks: session start, prompts, report cadence, pins survive compaction', (
   assert.equal(state.baseline.task, 'Fix the flaky auth test. Do not touch the database schema.');
   assert.deepEqual(state.pins.map((p) => p.text), ['Do not touch the database schema.']);
 
-  // Second prompt: same tier, not due (cadence 3), so silence.
+  // Prompts 2 and 3: same tier and action, inside the cadence window, so silence
+  // even though 3 is a multiple of the cadence. The same warning is not repeated.
   out = hook(env, { ...base, hook_event_name: 'UserPromptSubmit', user_prompt: 'keep going' });
   assert.equal(out, '');
-  // Third prompt: routine readout is due.
   out = hook(env, { ...base, hook_event_name: 'UserPromptSubmit', user_prompt: 'and then?' });
+  assert.equal(out, '');
+  // Prompt 6: a full cadence window has passed since the last readout, so it repeats.
+  for (const p of ['ok', 'next']) assert.equal(hook(env, { ...base, hook_event_name: 'UserPromptSubmit', user_prompt: p }), '');
+  out = hook(env, { ...base, hook_event_name: 'UserPromptSubmit', user_prompt: 'status?' });
   json = JSON.parse(out);
   assert.match(json.systemMessage, /Session vitals:/);
 
@@ -91,6 +95,37 @@ test('probe: good answers pass, bad answers register mismatches and change the t
   const rep = cli(env, ['report'], '/tmp/proj2');
   assert.match(rep.stdout, /tier=critical/);
   assert.match(rep.stdout, /action=abandon/);
+});
+
+test('task notifications and slash commands are not prompts: no baseline, no pins, no count', () => {
+  const { dir, env } = sandbox();
+  const transcript = path.join(dir, 't.jsonl');
+  fs.writeFileSync(transcript, healthySession().text());
+  const base = { session_id: 'tn1', transcript_path: transcript, cwd: '/tmp/proj5' };
+  hook(env, { ...base, hook_event_name: 'SessionStart', startup_reason: 'startup' });
+  hook(env, { ...base, hook_event_name: 'UserPromptSubmit', user_prompt: '/session-vitals:vitals' });
+  hook(env, { ...base, hook_event_name: 'UserPromptSubmit', user_prompt: '<task-notification>\n<summary>Agent finished</summary>\n<result>**Findings.** Never assert the output. Do not touch the schema.</result>\n</task-notification>' });
+  let state = JSON.parse(fs.readFileSync(path.join(dir, 'sessions', 'tn1.json'), 'utf8'));
+  assert.equal(state.baseline, null);
+  assert.deepEqual(state.pins, []);
+  assert.equal(state.promptCount, 1, 'the slash command counts as a prompt, the notification does not');
+  hook(env, { ...base, hook_event_name: 'UserPromptSubmit', user_prompt: 'scan the repo for slop code and tell me what you find?' });
+  state = JSON.parse(fs.readFileSync(path.join(dir, 'sessions', 'tn1.json'), 'utf8'));
+  assert.equal(state.baseline.task, 'scan the repo for slop code and tell me what you find?');
+});
+
+test('probe: a detailed paraphrase of a short request passes task recall', () => {
+  const { dir, env } = sandbox();
+  const transcript = path.join(dir, 't.jsonl');
+  fs.writeFileSync(transcript, healthySession().text());
+  const base = { session_id: 'pp1', transcript_path: transcript, cwd: '/tmp/proj6' };
+  hook(env, { ...base, hook_event_name: 'SessionStart', startup_reason: 'startup' });
+  hook(env, { ...base, hook_event_name: 'UserPromptSubmit', user_prompt: 'scan the repo for slop code and tell me what you find?' });
+  const a = path.join(dir, 'a.json');
+  fs.writeFileSync(a, JSON.stringify({ task: 'Read-only audit of the moto-platform repo for slop code across Edge Functions, mobile, web and shared, delivered as a ranked findings list with severities.', constraints: [], files: ['src/upload.ts', 'src/upload.test.ts'], lastCorrection: null, nextStep: 'report' }));
+  const r = cli(env, ['probe', '--answers', a], '/tmp/proj6');
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /PROBE RESULT: 0 mismatch/);
 });
 
 test('CLI finds state written under CLAUDE_PLUGIN_DATA even without that variable', () => {

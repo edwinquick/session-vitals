@@ -21,7 +21,7 @@ The informant outranks the patient. A model inside a degraded context will repor
 | `corrections` (last 6 prompts) | 1 | 2 | 3+ | User prompts opening with a correction phrase ("no", "I meant", "you already", "again", "as I said", ...). |
 | `stalled` | 6+ prompts | 12+ prompts | | Prompts since the last Edit/Write or `git commit`. Only scored once the session has edited something, so research sessions are not penalized. |
 | `api_errors` | 2+ | | | |
-| `probe` | | 1 mismatch | 2+ mismatches | From the patient layer. Ignored if older than 10 prompts or if a compaction or resume happened since. |
+| `probe` | 1 mismatch | 2 mismatches | 3+ mismatches | From the patient layer. Ignored if older than 10 prompts or if a compaction or resume happened since. Task recall is scored by overlap coefficient (shared content words over the smaller set), so a long, detailed paraphrase that contains the request's key words passes. |
 
 ## Tier
 
