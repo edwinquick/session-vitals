@@ -133,7 +133,7 @@ test('CLI finds state written under CLAUDE_PLUGIN_DATA even without that variabl
   const pluginData = path.join(dir, 'plugin-data');
   const transcript = path.join(dir, 't.jsonl');
   fs.writeFileSync(transcript, healthySession().text());
-  const hookEnv = { ...process.env, CLAUDE_PLUGIN_DATA: pluginData, HOME: dir };
+  const hookEnv = { ...process.env, CLAUDE_PLUGIN_DATA: pluginData, HOME: dir, USERPROFILE: dir };
   delete hookEnv.SESSION_VITALS_HOME;
   const base = { session_id: 'pd1', transcript_path: transcript, cwd: '/tmp/proj3' };
   hook(hookEnv, { ...base, hook_event_name: 'SessionStart', startup_reason: 'startup' });
@@ -143,7 +143,7 @@ test('CLI finds state written under CLAUDE_PLUGIN_DATA even without that variabl
   // The CLI shell has neither variable. It must still find the state through ~/.claude/plugins/data/session-vitals*.
   fs.mkdirSync(path.join(dir, '.claude', 'plugins', 'data'), { recursive: true });
   fs.renameSync(pluginData, path.join(dir, '.claude', 'plugins', 'data', 'session-vitals-inline'));
-  const cliEnv = { ...process.env, HOME: dir };
+  const cliEnv = { ...process.env, HOME: dir, USERPROFILE: dir };
   delete cliEnv.SESSION_VITALS_HOME; delete cliEnv.CLAUDE_PLUGIN_DATA;
   const pin = cli(cliEnv, ['pin', 'Keep the public API stable'], '/tmp/proj3');
   assert.equal(pin.status, 0, pin.stderr);
@@ -158,7 +158,7 @@ test('1M window is detected from the settings file when the model id lacks the s
   fs.writeFileSync(path.join(dir, '.claude', 'settings.json'), JSON.stringify({ model: 'claude-fable-5-1[1m]' }));
   const transcript = path.join(dir, 't.jsonl');
   fs.writeFileSync(transcript, healthySession().text());
-  const env = { ...process.env, HOME: dir, SESSION_VITALS_HOME: path.join(dir, 'sv') };
+  const env = { ...process.env, HOME: dir, USERPROFILE: dir, SESSION_VITALS_HOME: path.join(dir, 'sv') };
   delete env.SESSION_VITALS_CONTEXT_WINDOW;
   hook(env, { session_id: 'w1', transcript_path: transcript, cwd: '/tmp/proj4', model: 'claude-fable-5-1', hook_event_name: 'SessionStart', startup_reason: 'startup' });
   const state = JSON.parse(fs.readFileSync(path.join(dir, 'sv', 'sessions', 'w1.json'), 'utf8'));

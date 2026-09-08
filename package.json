@@ -1,6 +1,6 @@
 {
   "name": "session-vitals",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Cognitive-screening for Claude Code sessions: detect context decline, pin constraints across compaction, decide continue / compact / hand off / abandon.",
   "type": "module",
   "license": "MIT",

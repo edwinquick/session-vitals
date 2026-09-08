@@ -35,3 +35,13 @@ Tests use synthetic transcripts built by `test/fixtures/make-transcript.mjs`, wh
 ## Style
 
 Plain Node, ES modules, no build step, no dependencies. Prose in comments and docs uses ordinary sentences. Keep the four actions at four.
+
+## Releasing a change
+
+`claude plugin update` compares version strings, not file contents. If the version stays the same it reports "already at the latest version" and leaves the old scripts installed. So any pull request that changes behaviour (hooks, rubric, skill text, CLI output) must bump the version in all three places, in the same commit:
+
+- `.claude-plugin/plugin.json`
+- `.claude-plugin/marketplace.json` (both the marketplace `metadata.version` and the plugin entry)
+- `package.json`
+
+Patch for wording and threshold changes, minor for a new signal or action, major if the four actions ever change.
