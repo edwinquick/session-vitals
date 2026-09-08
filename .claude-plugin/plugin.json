@@ -1,7 +1,7 @@
 {
   "name": "session-vitals",
   "description": "Cognitive-screening for agent sessions: measures context decline from the transcript, probes task retention, and recommends continue, compact, hand off, or abandon.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "author": { "name": "Ed Quick" },
   "homepage": "https://github.com/edwinquick/session-vitals",
   "license": "MIT",
