@@ -39,6 +39,9 @@ test('hooks: session start, prompts, report cadence, pins survive compaction', (
   let json = JSON.parse(out);
   assert.match(json.systemMessage, /^Session vitals: (degraded|critical)\. .*Suggest: hand off to a fresh session\./);
   assert.match(json.hookSpecificOutput.additionalContext, /^\[session-vitals\] Session vitals: .*Finish the user's current request first/);
+  // The warning carries the handoff prompt itself, built from the prompt just captured.
+  assert.match(json.systemMessage, /\nAsk Claude:\n  Write a handoff doc for a fresh session: the goal \(Fix the flaky auth test\), .*"Do not touch the database schema"/);
+  assert.match(json.hookSpecificOutput.additionalContext, /verbatim for the user to run or paste: Write a handoff doc/);
   let state = JSON.parse(fs.readFileSync(path.join(dir, 'sessions', 'abc.json'), 'utf8'));
   assert.equal(state.baseline.task, 'Fix the flaky auth test. Do not touch the database schema.');
   assert.deepEqual(state.pins.map((p) => p.text), ['Do not touch the database schema.']);

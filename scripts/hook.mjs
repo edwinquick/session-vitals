@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import { parseTranscript } from './lib/transcript.mjs';
 import { computeVitals, extractConstraintCandidates } from './lib/vitals.mjs';
-import { scoreVitals, formatOneLine } from './lib/rubric.mjs';
+import { scoreVitals, formatOneLine, suggestCommand } from './lib/rubric.mjs';
 import { loadState, saveState, newState, loadConfig } from './lib/state.mjs';
 
 const REPORT_EVERY = Number(process.env.SESSION_VITALS_REPORT_EVERY || 5);
@@ -96,11 +96,19 @@ function onUserPrompt(input, state, config) {
       && !(prev && prev.tier === result.tier && prev.action === result.recommendation.action && state.promptCount - (prev.promptCount || 0) < REPORT_EVERY);
     if (due || worsened || crossedDegraded) {
       const line = formatOneLine(result, vitals);
+      const cmd = suggestCommand(result, vitals, state);
+      // The model gets the command too, so it hands over something the user
+      // can run or paste rather than a paraphrase of it.
+      let passOn = '';
+      if (result.recommendation.action !== 'continue') {
+        passOn = ' Finish the user\'s current request first, then pass this suggestion on in one sentence';
+        passOn += cmd ? `, followed by this text verbatim for the user to run or paste: ${cmd.text}` : '.';
+      }
       out = {
-        systemMessage: line,
+        systemMessage: formatOneLine(result, vitals, state),
         hookSpecificOutput: {
           hookEventName: 'UserPromptSubmit',
-          additionalContext: `[session-vitals] ${line} ${result.recommendation.why}${result.recommendation.action === 'continue' ? '' : ' Finish the user\'s current request first, then pass this suggestion on in one sentence.'}`,
+          additionalContext: `[session-vitals] ${line} ${result.recommendation.why}${passOn}`,
         },
       };
       state.lastReport = { tier: result.tier, score: result.score, action: result.recommendation.action, promptIndex: vitals.prompts, promptCount: state.promptCount, ts: new Date().toISOString() };
@@ -127,7 +135,7 @@ function onStop(input, state, config) {
     saveState(state);
     // Stop: user-facing warning only. No additionalContext, so the model is
     // not nudged into another turn by its own monitor.
-    process.stdout.write(JSON.stringify({ systemMessage: formatOneLine(result, vitals) }) + '\n');
+    process.stdout.write(JSON.stringify({ systemMessage: formatOneLine(result, vitals, state) }) + '\n');
     return;
   }
   saveState(state);
