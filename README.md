@@ -9,6 +9,9 @@
 
 ```
 Session vitals: degraded. Context 83% full · 2 retry loops · 2 corrections in 6 prompts. Suggest: hand off to a fresh session. /vitals for details.
+Ask Claude:
+  Write a handoff doc for a fresh session: the goal (Fix the flaky auth test), the current state, decisions made and why, these constraints verbatim: "Do not touch the database schema", the files touched (src/auth.test.ts), open questions, and the next step. Save it outside the repo and redact secrets.
+Then /clear and paste it.
 ```
 
 ## The problem
@@ -69,7 +72,16 @@ Needs Node 20 or newer on `PATH`. No dependencies.
 
 ## Use
 
-Mostly you do nothing. A one-line readout appears when the tier worsens, and every five prompts as a routine check. When it says something other than `continue`, run `/vitals` for the full screen:
+Mostly you do nothing. A one-line readout appears when the tier worsens, and every five prompts as a routine check. Whenever it suggests an action, the readout carries the text to act on, filled in from the session's own record (the task as you first stated it, your latest request, the pins, the files edited):
+
+| Action | What the readout gives you |
+|---|---|
+| **continue** (watch tier) | `/vitals pin "<a rule it captured from your prompts>"`, when nothing is pinned by hand yet |
+| **compact** | the full `/compact Focus on: … Current step: … Keep verbatim: … Drop: …` line, ready to run |
+| **handoff** | a prompt asking Claude for the handoff doc, naming the goal, pins and files, then `/clear` |
+| **abandon** | the git commands to check, then a restart prompt built only from your own words and the pins, for the fresh session |
+
+The same text goes to the model with an instruction to hand it over verbatim once it finishes your current request. For the full screen, run `/vitals`:
 
 ```
 SESSION VITALS: degraded → hand off to a fresh session
@@ -83,7 +95,9 @@ What's showing
 
 Why hand off
   Signals point at lost understanding rather than a full window. A fresh session with a handoff doc is cheaper than re-correcting this one.
-  Next: Write a handoff doc, then /clear and paste it
+  Ask Claude:
+    Write a handoff doc for a fresh session: the goal (Fix the flaky auth test), the current state, decisions made and why, these constraints verbatim: "Do not touch the database schema", the files touched (src/auth.test.ts), open questions, and the next step. Save it outside the repo and redact secrets.
+  Then /clear and paste it.
 
 Pinned constraints (1)
   • Do not touch the database schema.

@@ -168,6 +168,9 @@ export function computeVitals(events, opts = {}) {
     fastRefill,
     apiErrors,
     firstPrompt: prompts[0] ? prompts[0].text : null,
+    // The latest prompt that states work rather than pushing back or nodding
+    // along ("ok", "next"), used to name the current step in suggested commands.
+    lastRequest: [...prompts].reverse().find((p) => !p.correction && !p.text.trimStart().startsWith('/') && p.text.trim().length >= 20)?.text ?? null,
     elapsedMinutes: firstTs && lastTs ? Math.round((lastTs - firstTs) / 60000) : null,
   };
 }

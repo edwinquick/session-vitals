@@ -104,12 +104,72 @@ const DOTS = { 1: '●○○', 2: '●●○', 3: '●●●' };
 
 function sorted(signals) { return signals.slice().sort((a, b) => b.severity - a.severity); }
 
-// The warning line shown to the user by the hooks. One sentence of evidence,
-// one of advice.
-export function formatOneLine(result, v) {
+// The concrete thing to run or paste for the recommended action, filled in
+// from the session's own record: the task as the user first stated it, the
+// latest request, the pins, and the files edited. Returns null when there is
+// nothing specific to suggest.
+//   { lead, text, after }  lead introduces the text, after follows it
+export function suggestCommand(result, v, state = {}) {
+  const action = result.recommendation.action;
+  const pins = [...(state.pins || [])].sort((a, b) => (a.source === 'auto') - (b.source === 'auto'));
+  const pinList = pins.slice(0, 5).map((p) => `"${bare(oneLine(p.text, 140)).replace(/"/g, "'")}"`);
+  const task = oneLine(firstSentence(state.baseline?.task || v.firstPrompt || ''), 160);
+  const current = v.lastRequest ? oneLine(v.lastRequest, 160) : '';
+  const step = current && !sameText(current, task) ? current : '';
+  const files = v.editedFiles.slice(0, 6).map(shortPath);
+  const filesStr = files.length ? files.join(', ') + (v.editedFiles.length > 6 ? ` and ${v.editedFiles.length - 6} more` : '') : '';
+
+  if (action === 'continue') {
+    if (result.tier === 'healthy') return null;
+    const candidate = pins.find((p) => p.source === 'auto');
+    if (pins.some((p) => p.source !== 'auto')) return null;
+    return candidate
+      ? { lead: 'Pin a standing rule so it survives compaction:', text: `/vitals pin "${oneLine(candidate.text, 140).replace(/"/g, "'")}"` }
+      : { lead: 'Pin your standing rules so they survive compaction:', text: '/vitals pin "<rule, e.g. never push to main>"' };
+  }
+
+  if (action === 'compact') {
+    const parts = [`/compact Focus on: ${task || 'the current task'}.`];
+    if (step) parts.push(`Current step: ${step}.`);
+    if (pinList.length) parts.push(`Keep verbatim: ${pinList.join('; ')}.`);
+    parts.push(`Keep: decisions made and why${filesStr ? `, and the edits to ${filesStr}` : ''}.`);
+    parts.push('Drop: raw file contents and tool output already read, and failed attempts.');
+    return { lead: 'Run:', text: parts.map(stripDoubleStop).join(' ') };
+  }
+
+  if (action === 'handoff') {
+    const parts = ['Write a handoff doc for a fresh session:'];
+    parts.push(`the goal (${bare(task) || 'the task as I first stated it'})${step ? `, the current step (${bare(step)})` : ''},`);
+    parts.push('the current state, decisions made and why,');
+    if (pinList.length) parts.push(`these constraints verbatim: ${pinList.join('; ')},`);
+    parts.push(`${filesStr ? `the files touched (${filesStr})` : 'the files touched'}, open questions, and the next step.`);
+    parts.push('Save it outside the repo and redact secrets.');
+    const after = v.fastRefill || v.thrashing
+      ? 'Then /clear, paste it, and have the new session use subagents for bulk reads.'
+      : 'Then /clear and paste it.';
+    return { lead: 'Ask Claude:', text: parts.join(' '), after };
+  }
+
+  // abandon: the session's own summary is in doubt, so the restart prompt is
+  // built only from what the user said and what git holds.
+  const parts = [`${task || '<restate the task in your own words>'}${/[.!?]$/.test(task) ? '' : '.'}`];
+  if (pinList.length) parts.push(`Constraints: ${pinList.join('; ')}.`);
+  parts.push('Start from git status, git diff and recent commits; do not rely on any earlier summary.');
+  return { lead: 'Check git status and git diff --stat, then /clear and start with (edit to taste):', text: parts.join(' ') };
+}
+
+// The warning shown to the user by the hooks. One sentence of evidence, one
+// of advice, then the command to act on it when there is one.
+export function formatOneLine(result, v, state) {
   const top = sorted(result.signals).slice(0, 3).map((s) => s.short).join(' · ');
   const evidence = top ? `${top[0].toUpperCase()}${top.slice(1)}.` : `Context ${Math.round(v.contextPct * 100)}% full, nothing else showing.`;
-  return `Session vitals: ${result.tier}. ${evidence} Suggest: ${ACTION_LABEL[result.recommendation.action]}. /vitals for details.`;
+  const line = `Session vitals: ${result.tier}. ${evidence} Suggest: ${ACTION_LABEL[result.recommendation.action]}. /vitals for details.`;
+  const cmd = state ? suggestCommand(result, v, state) : null;
+  return cmd ? `${line}\n${formatCommand(cmd, '')}` : line;
+}
+
+function formatCommand(cmd, indent) {
+  return [`${indent}${cmd.lead}`, `${indent}  ${cmd.text}`, ...(cmd.after ? [`${indent}${cmd.after}`] : [])].join('\n');
 }
 
 export function formatReport(result, v, state = {}) {
@@ -127,7 +187,10 @@ export function formatReport(result, v, state = {}) {
     lines.push('');
     lines.push(`Why ${ACTION_LABEL[action].split(' ')[0] === 'carry' ? 'carry on' : ACTION_LABEL[action].replace(/ (with|to|from).*$/, '')}`);
     lines.push(`  ${result.recommendation.why}`);
-    if (result.recommendation.how) lines.push(`  Next: ${result.recommendation.how}`);
+    // The filled-in command replaces the generic template when there is one.
+    const cmd = suggestCommand(result, v, state);
+    if (cmd) lines.push(formatCommand(cmd, '  '));
+    else if (result.recommendation.how) lines.push(`  Next: ${result.recommendation.how}`);
   }
   if (state.pins?.length) {
     lines.push('');
@@ -147,4 +210,12 @@ export function formatReport(result, v, state = {}) {
 function plural2(n, one, many = one + 's') { return `${n} ${n === 1 ? one : many}`; }
 
 function fmtK(n) { return n >= 1000 ? Math.round(n / 1000) + 'k' : String(n); }
-function shortPath(p) { const parts = String(p).split('/'); return parts.slice(-2).join('/'); }
+function shortPath(p) { const parts = String(p).split(/[\\/]/); return parts.slice(-2).join('/'); }
+function oneLine(s, n) { const t = String(s).replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n - 1).trimEnd() + '…' : t; }
+// The first sentence of a prompt, so a long opening request names the task
+// without dragging its whole body into a command.
+function firstSentence(s) { const t = String(s).replace(/\s+/g, ' ').trim(); const m = t.match(/^.{20,}?[.!?](?=\s|$)/); return m ? m[0] : t; }
+function sameText(a, b) { const n = (x) => x.toLowerCase().replace(/[^a-z0-9]+/g, ''); return !!n(a) && !!n(b) && (n(a).startsWith(n(b)) || n(b).startsWith(n(a))); }
+function bare(s) { return String(s).replace(/[.!]+$/, ''); }
+// "Focus on: Fix the test.." when the interpolated text already ends a sentence.
+function stripDoubleStop(s) { return s.replace(/([.!?…])\.$/, '$1'); }

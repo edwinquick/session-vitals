@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseTranscriptText } from '../scripts/lib/transcript.mjs';
 import { computeVitals, isCorrection, extractConstraintCandidates } from '../scripts/lib/vitals.mjs';
-import { scoreVitals, formatOneLine, formatReport } from '../scripts/lib/rubric.mjs';
+import { scoreVitals, formatOneLine, formatReport, suggestCommand } from '../scripts/lib/rubric.mjs';
 import { healthySession, degradedSession, thrashingSession, TranscriptBuilder } from './fixtures/make-transcript.mjs';
 
 const run = (b) => { const v = computeVitals(parseTranscriptText(b.text()), { contextWindow: 200_000 }); return { v, r: scoreVitals(v) }; };
@@ -170,6 +170,51 @@ test('formatters produce a one-liner and a report', () => {
   const { v: hv, r: hr } = run(healthySession());
   const healthy = formatReport(hr, hv, {});
   assert.match(healthy, /^SESSION VITALS: healthy → carry on\n\nNothing showing\./);
+});
+
+test('warnings carry the concrete command for the action, filled in from the record', () => {
+  const state = {
+    baseline: { task: 'Fix the flaky auth test in src/auth.test.ts. It fails one run in five on CI.' },
+    pins: [{ text: 'Do not touch the schema.', source: 'auto' }, { text: 'Never push to main', source: 'manual' }],
+  };
+
+  const b = healthySession();
+  b.prompt('Now look at the rest of the module and the retry wrapper.');
+  for (let i = 0; i < 12; i++) b.tool('Read', { file_path: `/tmp/proj/src/m${i}.ts` }, { grow: 9000 });
+  b.setContext(170_000).assistantText();
+  const { v, r } = run(b);
+  assert.equal(r.recommendation.action, 'compact');
+  const compact = suggestCommand(r, v, state);
+  assert.match(compact.text, /^\/compact Focus on: Fix the flaky auth test in src\/auth\.test\.ts\. Current step: Now look at the rest of the module and the retry wrapper\. /);
+  assert.match(compact.text, /Keep verbatim: "Never push to main"; "Do not touch the schema"\./, 'manual pins first, no doubled punctuation');
+  assert.match(compact.text, /the edits to src\/upload\.ts/);
+  const line = formatOneLine(r, v, state);
+  assert.match(line, /\/vitals for details\.\nRun:\n  \/compact Focus on: /);
+  const rep = formatReport(r, v, state);
+  assert.match(rep, /Why compact\n.*\n  Run:\n    \/compact Focus on: /);
+  assert.ok(!/<the task>/.test(rep), 'the generic template is replaced by the filled-in command');
+
+  const { v: dv, r: dr } = run(degradedSession());
+  const handoff = suggestCommand(dr, dv, state);
+  assert.match(handoff.text, /^Write a handoff doc for a fresh session: the goal \(Fix the flaky auth test in src\/auth\.test\.ts\)/);
+  assert.match(handoff.text, /the files touched \(src\/auth\.test\.ts\)/);
+  assert.equal(handoff.after, 'Then /clear and paste it.');
+
+  const ab = healthySession();
+  for (const t of ['No, that is the wrong file.', 'You already changed that, undo it.', 'Again: only the upload client.']) { ab.prompt(t); ab.assistantText(); }
+  const { v: av, r: ar } = run(ab);
+  const restart = suggestCommand(ar, av, state);
+  assert.match(restart.lead, /git status/);
+  assert.match(restart.text, /^Fix the flaky auth test in src\/auth\.test\.ts\. Constraints: /);
+  assert.match(restart.text, /do not rely on any earlier summary/);
+
+  // Healthy: nothing to run. Watch with only auto pins: suggest pinning one.
+  const { v: hv, r: hr } = run(healthySession());
+  assert.equal(suggestCommand(hr, hv, state), null);
+  assert.equal(formatOneLine(hr, hv, state).includes('\n'), false);
+  const watch = { ...hr, tier: 'watch', recommendation: { action: 'continue' } };
+  assert.equal(suggestCommand(watch, hv, { pins: [{ text: 'Do not touch the schema.', source: 'auto' }] }).text, '/vitals pin "Do not touch the schema."');
+  assert.equal(suggestCommand(watch, hv, state), null, 'already has a manual pin');
 });
 
 test('window is inferred as 1M when the session has already exceeded 200k', () => {

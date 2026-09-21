@@ -45,6 +45,8 @@ Exactly four. Each has a different cost and a different failure mode.
 | critical | thrashing | **handoff**, and change the working pattern | Volume, not memory, is the problem. A fresh session that delegates bulk reads to subagents will not refill the way this one does. Abandon is not warranted while the task is still held. |
 | critical | otherwise | **handoff** | Hand off before the next compaction erases what is still correct. |
 
+Every warning and report carries the concrete text for its action, built by `suggestCommand` in `scripts/lib/rubric.mjs` from the session record alone: the first sentence of the baseline task, the latest user prompt that states work (not a correction, not a slash command, 20+ characters), up to five pins (manual first), and up to six edited files. For **compact** that is a ready-to-run `/compact` line; for **handoff**, a prompt asking for the handoff doc; for **abandon**, a restart prompt that uses only the user's own task statement and pins, never the session's account of itself; for **continue** at `watch`, a `/vitals pin` for a captured rule when nothing is pinned by hand.
+
 Abandon is reserved for evidence of lost understanding (repeated corrections, a failed probe). Volume signals alone, however severe, never trigger it: a multi-day session with six compactions and zero corrections is heavy, not confused.
 
 ## Compaction hygiene (applies to every action)
