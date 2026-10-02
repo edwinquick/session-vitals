@@ -203,7 +203,10 @@ export function formatReport(result, v, state = {}) {
   }
   lines.push('');
   const files = v.editedFiles.length;
-  lines.push(`Session: ${v.prompts} prompts · ${v.toolCalls} tool calls · ${v.elapsedMinutes ?? '?'} min · ${plural2(v.compactions.length, 'compaction')} · ${files ? plural2(files, 'file') + ' edited' : 'nothing edited yet'}`);
+  // Shell edits are recognized by pattern, so with no edits found in a
+  // shell-heavy session the honest reading is "none seen", not "none made".
+  const noEdits = v.shellCalls >= 10 ? 'no edits detected (shell commands are only partly visible)' : 'nothing edited yet';
+  lines.push(`Session: ${v.prompts} prompts · ${v.toolCalls} tool calls · ${v.elapsedMinutes ?? '?'} min · ${plural2(v.compactions.length, 'compaction')} · ${files ? plural2(files, 'file') + ' edited' : noEdits}`);
   return lines.join('\n');
 }
 

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseTranscriptText } from '../scripts/lib/transcript.mjs';
-import { computeVitals, isCorrection, extractConstraintCandidates } from '../scripts/lib/vitals.mjs';
+import { computeVitals, isCorrection, extractConstraintCandidates, shellEditTargets } from '../scripts/lib/vitals.mjs';
 import { scoreVitals, formatOneLine, formatReport, suggestCommand } from '../scripts/lib/rubric.mjs';
 import { healthySession, degradedSession, thrashingSession, TranscriptBuilder } from './fixtures/make-transcript.mjs';
 
@@ -223,6 +223,65 @@ test('window is inferred as 1M when the session has already exceeded 200k', () =
   const v = computeVitals(parseTranscriptText(b.text()), { contextWindow: 200_000 });
   assert.equal(v.contextWindow, 1_000_000);
   assert.ok(v.contextPct < 0.5);
+});
+
+test('shell edit detector finds common write shapes and ignores reads, pipes and scratch (issue #5)', () => {
+  const cases = [
+    ["sed -i 's/a/b/' src/app.ts", ['src/app.ts']],
+    ["sed -i.bak -e 's/x/y/' docs/shipped-log.md && git add -A", ['docs/shipped-log.md']],
+    ["cat > .github/workflows/deploy.yml <<'EOF'\nname: x\nrun: a > b\nEOF\ngit status", ['.github/workflows/deploy.yml']],
+    ['echo hi >> docs/notes.md', ['docs/notes.md']],
+    ["printf 'x' | tee -a README.md", ['README.md']],
+    ["python3 - <<'PY'\nimport pathlib\nopen('docs/runbook.md', 'w').write(s)\npathlib.Path('src/a.py').write_text(s)\nPY", ['docs/runbook.md', 'src/a.py']],
+    [`node -e "require('fs').writeFileSync('package.json', x)"`, ['package.json']],
+    ['Set-Content -Path src/x.ts -Value $v -Encoding utf8', ['src/x.ts']],
+    [String.raw`$c | Out-File -FilePath "C:\repo\notes.md"`, [String.raw`C:\repo\notes.md`]],
+    ['npm test 2>&1 | tail -5', []],
+    ['grep -rn foo src > /tmp/out.txt', []],
+    ['ls 2>/dev/null', []],
+    [`node -e "const f = (a) => a > 1"`, []],
+    ['git log --oneline -3', []],
+    ['echo $x > $null', []],
+    ["cat > \"$TEMP/notes.md\" <<'X'\nok\nX", []],
+    ['Out-File -FilePath $env:TEMP/x.txt', []],
+    [`python3 -c "print(open('a.txt').read())"`, []],
+    [`gh pr create --body "a -> b > c"`, []],
+    [`S="/c/Users/me/AppData/Local/Temp/claude/x/scratchpad"; cat > "$S/pr.md" <<'EOF'\nbody\nEOF`, []],
+    ['T=/c/Users/me/.claude/jobs/1/tmp && cat > $T/d2139.txt', []],
+    [`gh pr list --json mergedAt --jq '.[] | select(.mergedAt > "2026-09-11T00:00:00Z")'`, []],
+    [`python3 -c "x = 1\nif v>0: print(v)"`, []],
+    [`node -e 'const s = \`<p class="a">{i > 0 && ", "}</p>\`; fs.writeFileSync("public/_headers.txt", s)'`, ['public/_headers.txt']],
+    [`sed -n 388,430p app/navigate.tsx`, []],
+    // macOS: BSD sed's empty suffix argument, zsh noclobber override, per-user temp.
+    [`sed -i '' -e 's/a/b/' docs/a.md docs/b.md`, ['docs/a.md', 'docs/b.md']],
+    ['echo x >| out/forced.md', ['out/forced.md']],
+    ['gh pr view 1 --json body -q .body > /var/folders/7x/k2j9/T/body.md', []],
+    ["cat > /private/tmp/claude-501/proj/abc/scratchpad/pr.md <<'EOF'\nx\nEOF", []],
+    [`sed -i "s/select plan(8);/select plan(9);/" supabase/tests/a.test.sql b.sql`, ['supabase/tests/a.test.sql', 'b.sql']],
+  ];
+  for (const [cmd, want] of cases) assert.deepEqual(shellEditTargets(cmd).sort(), [...want].sort(), cmd);
+});
+
+test('edits made through the shell count as edits and reset the stall counter (issue #5)', () => {
+  const b = new TranscriptBuilder();
+  b.prompt('Update the deploy workflow and the runbook.');
+  b.tool('Bash', { command: "sed -i 's/v1/v2/' .github/workflows/deploy-supabase.yml" });
+  b.tool('PowerShell', { command: 'Set-Content -Path docs/mobile-release-runbook.md -Value $text' });
+  for (let i = 0; i < 8; i++) { b.prompt(`step ${i}`); b.tool('Bash', { command: 'npm test' }).assistantText(); }
+  b.prompt('fix the log too');
+  b.tool('Bash', { command: "cat >> docs/shipped-log.md <<'EOF'\n- shipped\nEOF" }).assistantText();
+  const { v } = run(b);
+  assert.deepEqual(v.editedFiles, ['.github/workflows/deploy-supabase.yml', 'docs/mobile-release-runbook.md', 'docs/shipped-log.md']);
+  assert.equal(v.promptsSinceProgress, 0);
+  assert.match(formatReport(scoreVitals(v), v, {}), /3 files edited/);
+});
+
+test('a shell-heavy session with no recognizable edits says so instead of "nothing edited yet"', () => {
+  const b = new TranscriptBuilder();
+  b.prompt('Tidy things up.');
+  for (let i = 0; i < 12; i++) b.tool('Bash', { command: `python3 tools/fix.py ${i}` });
+  const { v, r } = run(b);
+  assert.match(formatReport(r, v, {}), /no edits detected \(shell commands are only partly visible\)/);
 });
 
 test('research session with no edits is not penalized for stalling', () => {
