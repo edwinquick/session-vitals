@@ -32,7 +32,7 @@ const PROGRESS_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 const READ_TOOLS = new Set(['Read']);
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell']);
 // Writes that are not to the project: discarded output and scratch space.
-const NOT_A_PROJECT_FILE_RE = /^(?:\/dev\/|\$null$|nul$|&|\$\{?(?:env:)?(?:TEMP|TMP|TMPDIR)\b)|(?:^|[\\/])(?:tmp|temp|scratchpad)[\\/]|^\/tmp\b/i;
+const NOT_A_PROJECT_FILE_RE = /^(?:\/dev\/|\$null$|nul$|&|\$\{?(?:env:)?(?:TEMP|TMP|TMPDIR)\b)|(?:^|[\\/])(?:tmp|temp|scratchpad)[\\/]|^\/tmp\b|^\/(?:private\/)?var\/folders\//i;
 
 // A target must look like a file with an extension. That drops Makefile and
 // friends, and also every jq timestamp, version number and code fragment that
@@ -54,7 +54,7 @@ export function shellEditTargets(command) {
   // Shell syntax only outside heredoc bodies and quoted strings, so a `>` in
   // generated HTML, a jq filter or a node arrow function is not a redirection.
   const shell = maskQuoted(command.replace(/<<-?\s*(['"]?)(\w+)\1([^\n]*)\n[\s\S]*?\n\s*\2\s*(?=\n|$)/g, '<<$2$3'));
-  for (const m of shell.matchAll(/(?:^|\s)>>?\s*([^\s;&|<>()]+)/g)) targets.add(m[1]);
+  for (const m of shell.matchAll(/(?:^|\s)>[>|]?\s*([^\s;&|<>()]+)/g)) targets.add(m[1]);
   for (const m of shell.matchAll(/\btee\s+(?:-a\s+)?([^\s;&|<>()]+)/g)) targets.add(m[1]);
   for (const m of shell.matchAll(/\b(?:Set-Content|Add-Content|Out-File)\b[^|;\n]*?(?:-(?:Path|FilePath|LiteralPath)\s+|\s)([^\s|;-][^\s|;]*)/gi)) targets.add(m[1]);
   // sed: only with an in-place flag; the files are the trailing arguments.

@@ -252,6 +252,11 @@ test('shell edit detector finds common write shapes and ignores reads, pipes and
     [`python3 -c "x = 1\nif v>0: print(v)"`, []],
     [`node -e 'const s = \`<p class="a">{i > 0 && ", "}</p>\`; fs.writeFileSync("public/_headers.txt", s)'`, ['public/_headers.txt']],
     [`sed -n 388,430p app/navigate.tsx`, []],
+    // macOS: BSD sed's empty suffix argument, zsh noclobber override, per-user temp.
+    [`sed -i '' -e 's/a/b/' docs/a.md docs/b.md`, ['docs/a.md', 'docs/b.md']],
+    ['echo x >| out/forced.md', ['out/forced.md']],
+    ['gh pr view 1 --json body -q .body > /var/folders/7x/k2j9/T/body.md', []],
+    ["cat > /private/tmp/claude-501/proj/abc/scratchpad/pr.md <<'EOF'\nx\nEOF", []],
     [`sed -i "s/select plan(8);/select plan(9);/" supabase/tests/a.test.sql b.sql`, ['supabase/tests/a.test.sql', 'b.sql']],
   ];
   for (const [cmd, want] of cases) assert.deepEqual(shellEditTargets(cmd).sort(), [...want].sort(), cmd);
