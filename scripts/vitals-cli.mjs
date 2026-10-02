@@ -12,7 +12,7 @@ import path from 'node:path';
 import { parseTranscript } from './lib/transcript.mjs';
 import { computeVitals } from './lib/vitals.mjs';
 import { scoreVitals, formatReport } from './lib/rubric.mjs';
-import { findStateForCwd, guessTranscriptForCwd, saveState, loadConfig, detectContextWindow } from './lib/state.mjs';
+import { findStateForCwd, guessTranscriptForCwd, saveState, loadConfig, detectContextWindow, adoptObservedWindow } from './lib/state.mjs';
 
 const args = process.argv.slice(2);
 const cmd = args[0] || 'report';
@@ -29,7 +29,8 @@ function run() {
       if (!transcript || !fs.existsSync(transcript)) throw new Error('no transcript found; pass --transcript <path>');
       const config = loadConfig();
       const events = parseTranscript(transcript);
-      const vitals = computeVitals(events, { ...config, contextWindow: state?.contextWindow || detectContextWindow(process.env.SESSION_VITALS_MODEL) });
+      const vitals = computeVitals(events, { ...config, contextWindow: state?.contextWindow || detectContextWindow(process.env.SESSION_VITALS_MODEL, cwd) });
+      if (state && adoptObservedWindow(state, vitals)) state = saveState(state);
       const probe = state?.probe && !state.probe.stale && vitals.prompts - state.probe.promptIndex <= 10 ? state.probe : null;
       const result = scoreVitals(vitals, probe);
       if (has('--json')) process.stdout.write(JSON.stringify({ transcript, vitals, result, pins: state?.pins || [], probe: state?.probe || null }, null, 2) + '\n');
@@ -43,6 +44,7 @@ function run() {
       const answers = JSON.parse(fs.readFileSync(answersPath, 'utf8'));
       const events = transcript && fs.existsSync(transcript) ? parseTranscript(transcript) : [];
       const vitals = computeVitals(events, { contextWindow: state.contextWindow });
+      adoptObservedWindow(state, vitals);
       const scored = scoreProbe(answers, state, vitals);
       state.probe = { ...scored, promptIndex: vitals.prompts, ts: new Date().toISOString(), stale: false, answers };
       saveState(state);

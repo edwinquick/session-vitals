@@ -135,7 +135,7 @@ node scripts/replay.mjs ~/.claude/projects/<project>/<session>.jsonl --window 10
 | Variable | Default | Meaning |
 |---|---|---|
 | `SESSION_VITALS_REPORT_EVERY` | `5` | prompts between routine readouts |
-| `SESSION_VITALS_CONTEXT_WINDOW` | detected | window size in tokens. Detected as 1,000,000 when the model id or the `model` in a Claude settings file carries `[1m]`, or once the session has held more than 200k tokens; otherwise 200,000 |
+| `SESSION_VITALS_CONTEXT_WINDOW` | detected | window size in tokens. Detected as 1,000,000 when the model id or the `model` in a Claude settings file carries `[1m]`, once the session has held more than 200k tokens, or when an earlier session on the same model id did (remembered in `windows.json` under the state directory; delete an entry there if that id is now running on a 200k window); otherwise 200,000 |
 | `SESSION_VITALS_HOME` | plugin data dir, else `~/.claude/session-vitals` | where per-session state lives. The CLI also searches `~/.claude/plugins/data/session-vitals*`, so it finds hook state without this being set |
 
 Window thresholds (`recentToolWindow`, `recentPromptWindow`, `thrashRefillFraction`, `thrashWithinPrompts`, `recentCompactionPrompts`) can be overridden in `config.json` under that directory.

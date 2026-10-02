@@ -66,13 +66,17 @@ export function newState(input) {
   };
 }
 
-// Neither the hook payload nor the transcript carries the "[1m]" suffix the
-// user configured, so also look at the settings files that could have set it.
-// computeVitals has a further fallback: a session that has held more than
-// 200k tokens is on a 1M window whatever the id says.
+// Neither the hook payload nor the transcript reliably carries the "[1m]"
+// suffix, so also look at the settings files that could have set it, and at
+// model ids this machine has already seen hold more than 200k tokens. Below
+// 200k a 1M session looks exactly like a full 200k one, so without that memory
+// the first readings of every such session would be measured against 200k.
+// computeVitals has a further fallback for the session that first crosses it.
 export function detectContextWindow(model, cwd) {
   if (process.env.SESSION_VITALS_CONTEXT_WINDOW) return Number(process.env.SESSION_VITALS_CONTEXT_WINDOW);
   if (model && /\[1m\]|-1m\b|1m$/i.test(model)) return 1_000_000;
+  const learned = model && learnedWindows()[modelKey(model)];
+  if (learned) return learned;
   const candidates = [
     cwd && path.join(cwd, '.claude', 'settings.local.json'),
     cwd && path.join(cwd, '.claude', 'settings.json'),
@@ -84,6 +88,42 @@ export function detectContextWindow(model, cwd) {
   }
   if (process.env.ANTHROPIC_MODEL && /\[1m\]/i.test(process.env.ANTHROPIC_MODEL)) return 1_000_000;
   return 200_000;
+}
+
+// Raise the session's window to what the transcript proved (computeVitals
+// upgrades it once more than 200k tokens were held) and remember the model id,
+// so the hook, the CLI and later sessions on the same id all agree. Returns
+// true when the state changed and should be saved.
+export function adoptObservedWindow(state, vitals) {
+  if (process.env.SESSION_VITALS_CONTEXT_WINDOW) return false;
+  if (!(vitals.contextWindow > (state.contextWindow || 0))) return false;
+  state.contextWindow = vitals.contextWindow;
+  if (state.model) rememberWindow(state.model, vitals.contextWindow);
+  return true;
+}
+
+function modelKey(model) { return String(model).toLowerCase().replace(/\[1m\]$/, ''); }
+
+function learnedWindows() {
+  const out = {};
+  for (const root of candidateRoots().reverse()) {
+    const w = readJson(path.join(root, 'windows.json'));
+    if (w) for (const [k, v] of Object.entries(w)) if (Number(v?.window) > 0) out[k] = Number(v.window);
+  }
+  return out;
+}
+
+function rememberWindow(model, window) {
+  const p = path.join(candidateRoots()[0], 'windows.json');
+  const w = readJson(p) || {};
+  const key = modelKey(model);
+  if (w[key]?.window >= window) return;
+  w[key] = { window, seenAt: new Date().toISOString() };
+  try {
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p + '.tmp', JSON.stringify(w, null, 2));
+    fs.renameSync(p + '.tmp', p);
+  } catch { /* best effort: the session state still carries the window */ }
 }
 
 // Newest state file whose cwd matches, across every root, for the CLI when

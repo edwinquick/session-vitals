@@ -13,7 +13,7 @@ The informant outranks the patient. A model inside a degraded context will repor
 
 | Signal | 1 | 2 | 3 | Notes |
 |---|---|---|---|---|
-| `context` (fill of the window) | > 55% | > 75% | > 90% | Rot begins well before the window is full (Chroma, 2025). Percent of the model's window, detected from the model id (`[1m]` means 1M). |
+| `context` (fill of the window) | > 55% | > 75% | > 90% | Rot begins well before the window is full (Chroma, 2025). Percent of the model's window, detected from the model id (`[1m]` means 1M), a settings file, or the same model id having held more than 200k tokens in this or an earlier session. |
 | `compaction` (count in the last 40 prompts) | 1 | 2 | 3+ | Three or more lifetime compactions score at least 1. +1 for **fast refill**: context back to 50% of the window within 10 prompts of the last compaction (measured from the compaction event itself, so the peak-fill turn that triggered it does not count). +1 and hard critical for **thrashing**: two compactions within 10 prompts of each other, the second in the last 40. Either means the working pattern must change, not that another compaction is due. Recency matters because six compactions across a week-long session is a heavy session, not a declining one. |
 | `tool_errors` (recent 30 calls) | > 25% | > 40% | > 60% | +1 if the recent rate exceeds the session rate by more than 20 points (a rising slope). Ignored under 5 recent calls. |
 | `retry_loops` | 1 run | 2 runs | 3+ runs | A run is two or more consecutive tool calls with identical name and input. |
