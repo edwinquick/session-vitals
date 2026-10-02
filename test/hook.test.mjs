@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { degradedSession, healthySession } from './fixtures/make-transcript.mjs';
+import { degradedSession, healthySession, TranscriptBuilder } from './fixtures/make-transcript.mjs';
 
 const HOOK = path.resolve('scripts/hook.mjs');
 const CLI = path.resolve('scripts/vitals-cli.mjs');
@@ -166,6 +166,40 @@ test('1M window is detected from the settings file when the model id lacks the s
   hook(env, { session_id: 'w1', transcript_path: transcript, cwd: '/tmp/proj4', model: 'claude-fable-5-1', hook_event_name: 'SessionStart', startup_reason: 'startup' });
   const state = JSON.parse(fs.readFileSync(path.join(dir, 'sv', 'sessions', 'w1.json'), 'utf8'));
   assert.equal(state.contextWindow, 1_000_000);
+});
+
+test('a model id seen above 200k is measured against 1M from the next session\'s first reading (issue #7)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'session-vitals-'));
+  const env = { ...process.env, HOME: dir, USERPROFILE: dir, SESSION_VITALS_HOME: path.join(dir, 'sv') };
+  delete env.SESSION_VITALS_CONTEXT_WINDOW; delete env.ANTHROPIC_MODEL;
+  const model = 'claude-opus-5-5';
+  const sessionAt = (id, tokens) => {
+    const t = path.join(dir, id + '.jsonl');
+    const b = new TranscriptBuilder();
+    b.prompt('Burn down the review list.').setContext(tokens).assistantText();
+    fs.writeFileSync(t, b.text());
+    return { session_id: id, transcript_path: t, cwd: '/tmp/proj7', model };
+  };
+  const readState = (id) => JSON.parse(fs.readFileSync(path.join(dir, 'sv', 'sessions', id + '.json'), 'utf8'));
+
+  // First session crosses 200k: the window it proved is kept in state and learned for the id.
+  const first = sessionAt('big', 450_000);
+  hook(env, { ...first, hook_event_name: 'SessionStart', startup_reason: 'startup' });
+  assert.equal(readState('big').contextWindow, 200_000);
+  hook(env, { ...first, hook_event_name: 'UserPromptSubmit', user_prompt: 'next' });
+  assert.equal(readState('big').contextWindow, 1_000_000);
+
+  // Second session on the same id sits at 188k: 94% of 200k, but it is a 1M session.
+  const second = sessionAt('near', 188_000);
+  hook(env, { ...second, hook_event_name: 'SessionStart', startup_reason: 'startup' });
+  assert.equal(readState('near').contextWindow, 1_000_000);
+  const out = hook(env, { ...second, hook_event_name: 'UserPromptSubmit', user_prompt: 'next' });
+  assert.ok(!/94%|Context is 9\d% full/.test(out), out);
+  const r = cli(env, ['report', '--json'], '/tmp/proj7');
+  assert.equal(r.status, 0, r.stderr);
+  const report = JSON.parse(r.stdout);
+  assert.equal(report.vitals.contextWindow, 1_000_000);
+  assert.ok(report.vitals.contextPct < 0.2);
 });
 
 test('hook never fails the session on garbage input', () => {

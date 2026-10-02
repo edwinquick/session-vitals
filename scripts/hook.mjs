@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import { parseTranscript } from './lib/transcript.mjs';
 import { computeVitals, extractConstraintCandidates } from './lib/vitals.mjs';
 import { scoreVitals, formatOneLine, suggestCommand } from './lib/rubric.mjs';
-import { loadState, saveState, newState, loadConfig } from './lib/state.mjs';
+import { loadState, saveState, newState, loadConfig, adoptObservedWindow } from './lib/state.mjs';
 
 const REPORT_EVERY = Number(process.env.SESSION_VITALS_REPORT_EVERY || 5);
 const MAX_AUTO_PINS = 12;
@@ -145,6 +145,7 @@ function measure(state, config) {
   if (!state.transcriptPath || !fs.existsSync(state.transcriptPath)) return null;
   const events = parseTranscript(state.transcriptPath);
   const vitals = computeVitals(events, { ...config, contextWindow: state.contextWindow });
+  adoptObservedWindow(state, vitals); // callers save state after measuring
   const probe = state.probe && !state.probe.stale && vitals.prompts - state.probe.promptIndex <= 10 ? state.probe : null;
   const result = scoreVitals(vitals, probe);
   return { result, vitals };
