@@ -37,7 +37,7 @@ The research is ahead of the tooling here. Context rot is measured ([Chroma, 202
 | identical retry runs | the same command with the same input, again |
 | re-read files | the same file read three or more times in the recent window |
 | user corrections | prompts opening with "no", "I meant", "you already", "again", "your context is stale" |
-| prompts since progress | a session that has stopped editing or committing |
+| prompts since progress | a session that has stopped editing or committing, counting edits made through shell commands (`sed -i`, redirects, `tee`, `Set-Content`, scripts that write files) as well as the Edit and Write tools |
 
 **Probes the model.** The `/vitals` skill asks the model to state, from memory and before looking anything up: the task, the constraints in force, the files it has edited, and the last correction it received. A script scores the answers against the record. The informant outranks the patient.
 
@@ -150,7 +150,7 @@ Window thresholds (`recentToolWindow`, `recentPromptWindow`, `thrashRefillFracti
 
 ## Privacy
 
-Everything runs locally. The hooks read your own transcript and write one small state file per session (baseline task, pins, last probe, last report) under your Claude Code data directory. Nothing leaves the machine. Never commit a real transcript as a test fixture; the synthetic builder in `test/fixtures/` exists so you do not have to.
+Everything runs locally. The hooks read your own transcript and write one small state file per session (baseline task, pins, last probe, last report) under your Claude Code data directory, plus a `windows.json` there that records only which model ids have run on a 1M window. Nothing leaves the machine. Never commit a real transcript as a test fixture; the synthetic builder in `test/fixtures/` exists so you do not have to.
 
 ## Status and contributing
 

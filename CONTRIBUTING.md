@@ -30,6 +30,8 @@ A signal is worth adding if a script can compute it from the transcript alone an
 node --test
 ```
 
+CI runs the suite on Linux, macOS and Windows, each on Node 20, 22 and 24, so avoid assumptions about path separators, temp directories or shell syntax in both code and tests.
+
 Tests use synthetic transcripts built by `test/fixtures/make-transcript.mjs`, which mirrors the Claude Code JSONL shape. If the real format changes, fix the parser in `scripts/lib/transcript.mjs` and the builder together.
 
 ## Style

@@ -38,7 +38,7 @@ Print the questions with `node "${CLAUDE_PLUGIN_ROOT}/scripts/vitals-cli.mjs" pr
 node "${CLAUDE_PLUGIN_ROOT}/scripts/vitals-cli.mjs" probe --answers <scratch-file>
 ```
 
-The scorer compares your answers against the first user prompt, the manual pins, the files the transcript shows you edited, and recent corrections. Mismatches feed back into the report.
+The scorer compares your answers against the first user prompt, the manual pins, the files the transcript shows you edited (through Edit and Write, and through shell commands that write files), and recent corrections. Mismatches feed back into the report.
 
 ## Step 3: re-run the report
 
