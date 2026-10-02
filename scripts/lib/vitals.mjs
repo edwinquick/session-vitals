@@ -30,6 +30,68 @@ const CONSTRAINT_RE = /^(never|always|do not|don'?t|must|no matter what|under no
 const NOT_A_CONSTRAINT_RE = /[`*<>{}|]|^\s*[-#\d.)]|\bI (?:did|applied|found|checked|ran)\b|\bwas\b|\bwere\b|\bis\b .*\bonly\b/i;
 const PROGRESS_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 const READ_TOOLS = new Set(['Read']);
+const SHELL_TOOLS = new Set(['Bash', 'PowerShell']);
+// Writes that are not to the project: discarded output and scratch space.
+const NOT_A_PROJECT_FILE_RE = /^(?:\/dev\/|\$null$|nul$|&|\$\{?(?:env:)?(?:TEMP|TMP|TMPDIR)\b)|(?:^|[\\/])(?:tmp|temp|scratchpad)[\\/]|^\/tmp\b/i;
+
+// A target must look like a file with an extension. That drops Makefile and
+// friends, and also every jq timestamp, version number and code fragment that
+// a `>` comparison would otherwise turn into an "edited file".
+const FILE_SHAPE_RE = /^[\w.~/\\:@$+-]+\.[A-Za-z0-9]{1,10}$/;
+
+// Files a shell command writes, when it does so in one of the common shapes:
+// `sed -i`, `>`/`>>` redirection (which covers `cat > f <<EOF`), `tee`,
+// PowerShell's Set-Content/Add-Content/Out-File, and scripts that open a file
+// for writing. Conservative on purpose: a missed edit costs less than a
+// `grep foo > /tmp/x` counted as one.
+export function shellEditTargets(command) {
+  const targets = new Set();
+  // Script bodies (python/node heredocs or -c/-e strings) carry the writes.
+  const q = String.raw`\\?(['"\x60])`;
+  for (const m of command.matchAll(new RegExp(String.raw`\bopen\(\s*[rf]?${q}([^'"\x60\n\\]+)\\?\1\s*,\s*\\?(['"])[wax]\+?b?\\?\3`, 'g'))) targets.add(m[2]);
+  for (const m of command.matchAll(new RegExp(String.raw`\bPath\(\s*[rf]?${q}([^'"\x60\n\\]+)\\?\1\s*\)\.write_(?:text|bytes)\(`, 'g'))) targets.add(m[2]);
+  for (const m of command.matchAll(new RegExp(String.raw`\b(?:writeFileSync|appendFileSync|writeFile)\(\s*${q}([^'"\x60\n\\]+)\\?\1`, 'g'))) targets.add(m[2]);
+  // Shell syntax only outside heredoc bodies and quoted strings, so a `>` in
+  // generated HTML, a jq filter or a node arrow function is not a redirection.
+  const shell = maskQuoted(command.replace(/<<-?\s*(['"]?)(\w+)\1([^\n]*)\n[\s\S]*?\n\s*\2\s*(?=\n|$)/g, '<<$2$3'));
+  for (const m of shell.matchAll(/(?:^|\s)>>?\s*([^\s;&|<>()]+)/g)) targets.add(m[1]);
+  for (const m of shell.matchAll(/\btee\s+(?:-a\s+)?([^\s;&|<>()]+)/g)) targets.add(m[1]);
+  for (const m of shell.matchAll(/\b(?:Set-Content|Add-Content|Out-File)\b[^|;\n]*?(?:-(?:Path|FilePath|LiteralPath)\s+|\s)([^\s|;-][^\s|;]*)/gi)) targets.add(m[1]);
+  // sed: only with an in-place flag; the files are the trailing arguments.
+  for (const m of shell.matchAll(/\bsed\s+([^|;&\n]*)/g)) {
+    const words = m[1].trim().split(/\s+/);
+    if (!words.some((w) => /^-[a-zA-Z]*i|^--in-place/.test(w))) continue;
+    for (let i = words.length - 1; i > 0 && FILE_SHAPE_RE.test(words[i]); i--) targets.add(words[i]);
+  }
+  // `S=<scratchpad>; cat > "$S/pr.md"` is a scratch write, so expand variables
+  // the same command assigns before deciding what is project and what is not.
+  const vars = new Map();
+  for (const m of command.matchAll(/(?:^|[\s;&(])\$?(\w+)\s?=\s?(['"]?)([^\s'";&|]+)\2/g)) vars.set(m[1].toLowerCase(), m[3]);
+  const expand = (f) => f.replace(/^\$\{?(?:env:)?(\w+)\}?/, (m, v) => vars.get(v.toLowerCase()) ?? m);
+  return [...targets].filter((f) => FILE_SHAPE_RE.test(f) && !NOT_A_PROJECT_FILE_RE.test(expand(f)));
+}
+
+// Replace each quoted string with "" unless its content is itself a plain
+// file path (`> "docs/a.md"`, `sed -i '...' "src/x.ts"`), which is kept bare.
+// A small scanner rather than a regex, because agent commands nest quotes,
+// escape them, and run scripts across many lines inside them.
+function maskQuoted(s) {
+  let out = '';
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (c === '\\') { out += s.slice(i, i + 2); i++; continue; }
+    if (c !== "'" && c !== '"') { out += c; continue; }
+    let body = '';
+    let j = i + 1;
+    for (; j < s.length && s[j] !== c; j++) {
+      if (c === '"' && s[j] === '\\' && '"\\$`'.includes(s[j + 1])) j++;
+      body += s[j];
+    }
+    out += FILE_SHAPE_RE.test(body) ? body : '""';
+    i = j;
+  }
+  return out;
+}
 
 export function isCorrection(text) {
   const t = text.trim();
@@ -114,13 +176,17 @@ export function computeVitals(events, opts = {}) {
   let everProgressed = false;
   const editedFiles = new Set();
   for (const t of toolUses) {
-    const isCommit = t.name === 'Bash' && typeof t.input.command === 'string' && /\bgit\s+commit\b/.test(t.input.command);
-    if (PROGRESS_TOOLS.has(t.name) || isCommit) {
+    const command = SHELL_TOOLS.has(t.name) && typeof t.input.command === 'string' ? t.input.command : null;
+    const isCommit = command !== null && /\bgit\s+commit\b/.test(command);
+    const shellTargets = command !== null ? shellEditTargets(command) : [];
+    if (PROGRESS_TOOLS.has(t.name) || isCommit || shellTargets.length) {
       everProgressed = true;
       lastProgressPromptIndex = t.promptIndex;
       if (t.input.file_path) editedFiles.add(t.input.file_path);
+      for (const f of shellTargets) editedFiles.add(f);
     }
   }
+  const shellCalls = toolUses.filter((t) => SHELL_TOOLS.has(t.name)).length;
   const promptsSinceProgress = everProgressed ? prompts.length - lastProgressPromptIndex : null;
 
   // Thrashing: the context refilled past a fraction of the window within a
@@ -161,6 +227,7 @@ export function computeVitals(events, opts = {}) {
     correctionPromptTexts: recentPrompts.filter((p) => p.correction).map((p) => p.text.slice(0, 120)),
     promptsSinceProgress, everProgressed,
     editedFiles: [...editedFiles],
+    shellCalls,
     compactions: compactions.map((c) => ({ trigger: c.trigger, preTokens: c.preTokens, postTokens: c.postTokens, promptIndex: c.promptIndex })),
     recentCompactions,
     promptsSinceCompaction: lastCompaction ? prompts.length - lastCompaction.promptIndex : null,

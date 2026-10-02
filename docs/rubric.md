@@ -19,7 +19,7 @@ The informant outranks the patient. A model inside a degraded context will repor
 | `retry_loops` | 1 run | 2 runs | 3+ runs | A run is two or more consecutive tool calls with identical name and input. |
 | `rereads` | 1 file | 3 files | | Files read three or more times within the last 40 tool calls. |
 | `corrections` (last 6 prompts) | 1 | 2 | 3+ | User prompts opening with a correction phrase ("no", "I meant", "you already", "again", "as I said", ...). |
-| `stalled` | 6+ prompts | 12+ prompts | | Prompts since the last Edit/Write or `git commit`. Only scored once the session has edited something, so research sessions are not penalized. |
+| `stalled` | 6+ prompts | 12+ prompts | | Prompts since the last Edit/Write, `git commit`, or shell command that writes a project file (`sed -i`, `>`/`>>`, `tee`, `Set-Content`/`Out-File`, or a python/node script opening a file for writing; writes to temp and scratchpad paths do not count). Shell edits are matched by pattern, so some are missed; a shell-heavy session with none found reports "no edits detected" rather than "nothing edited yet". Only scored once the session has edited something, so research sessions are not penalized. |
 | `api_errors` | 2+ | | | |
 | `probe` | 1 mismatch | 2 mismatches | 3+ mismatches | From the patient layer. Ignored if older than 10 prompts or if a compaction or resume happened since. Task recall is scored by overlap coefficient (shared content words over the smaller set), so a long, detailed paraphrase that contains the request's key words passes. |
 
