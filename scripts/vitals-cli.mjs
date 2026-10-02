@@ -7,22 +7,40 @@
 //   vitals-cli pins                  list pins
 //   vitals-cli unpin <index>         remove a pin (1-based, from `pins`)
 //   vitals-cli baseline "<task>"     override the baseline task statement
+// Every command takes --session <id>. Inside Claude Code the session id comes
+// from CLAUDE_CODE_SESSION_ID, so the flag is only needed from a terminal.
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseTranscript } from './lib/transcript.mjs';
 import { computeVitals } from './lib/vitals.mjs';
 import { scoreVitals, formatReport } from './lib/rubric.mjs';
-import { findStateForCwd, guessTranscriptForCwd, saveState, loadConfig, detectContextWindow, adoptObservedWindow } from './lib/state.mjs';
+import { resolveSession, saveState, loadConfig, detectContextWindow, adoptObservedWindow } from './lib/state.mjs';
 
-const args = process.argv.slice(2);
+// Options that take a value are pulled out first, so `pin "x" --session id`
+// pins "x" and not the flag.
+const VALUE_FLAGS = new Set(['--session', '--transcript', '--answers']);
+const raw = process.argv.slice(2);
+const opts = {};
+const args = [];
+for (let i = 0; i < raw.length; i++) {
+  if (VALUE_FLAGS.has(raw[i])) opts[raw[i]] = raw[++i];
+  else args.push(raw[i]);
+}
 const cmd = args[0] || 'report';
-const flag = (name) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
+const flag = (name) => opts[name];
 const has = (name) => args.includes(name);
 
 function run() {
   const cwd = process.env.CLAUDE_PROJECT_DIR || process.cwd();
-  let state = findStateForCwd(cwd) || findStateForCwd(null);
-  const transcript = flag('--transcript') || state?.transcriptPath || guessTranscriptForCwd(cwd);
+  const resolved = resolveSession({ sessionId: flag('--session'), cwd, transcript: flag('--transcript') });
+  if (resolved.error) throw new Error(resolved.error);
+  let state = resolved.state;
+  const transcript = resolved.transcript;
+  // State may only ever belong to the session being measured. A state file
+  // for another session must not lend its pins, probe or baseline.
+  if (state && resolved.sessionId && state.sessionId !== resolved.sessionId) state = null;
+  if (resolved.byRecency) process.stderr.write(`vitals: no session id given; using ${state.sessionId}, the only active session here
+`);
 
   switch (cmd) {
     case 'report': {
@@ -38,7 +56,7 @@ function run() {
       return;
     }
     case 'probe': {
-      if (!state) throw new Error('no session state; the hooks have not run for this project yet');
+      if (!state) throw new Error(noState(resolved));
       const answersPath = flag('--answers');
       if (!answersPath) { process.stdout.write(probeQuestions()); return; }
       const answers = JSON.parse(fs.readFileSync(answersPath, 'utf8'));
@@ -52,7 +70,7 @@ function run() {
       return;
     }
     case 'pin': {
-      if (!state) throw new Error('no session state; the hooks have not run for this project yet');
+      if (!state) throw new Error(noState(resolved));
       const text = args.slice(1).join(' ').trim();
       if (!text) throw new Error('usage: pin "<constraint>"');
       const existing = state.pins.find((p) => p.text === text);
@@ -62,13 +80,13 @@ function run() {
       return;
     }
     case 'pins': {
-      if (!state) throw new Error('no session state');
+      if (!state) throw new Error(noState(resolved));
       if (!state.pins.length) { process.stdout.write('no pins\n'); return; }
       state.pins.forEach((p, i) => process.stdout.write(`${i + 1}. [${p.source}] ${p.text}\n`));
       return;
     }
     case 'unpin': {
-      if (!state) throw new Error('no session state');
+      if (!state) throw new Error(noState(resolved));
       const i = Number(args[1]) - 1;
       if (!(i >= 0 && i < state.pins.length)) throw new Error('unpin <index from pins>');
       const [removed] = state.pins.splice(i, 1);
@@ -77,7 +95,7 @@ function run() {
       return;
     }
     case 'baseline': {
-      if (!state) throw new Error('no session state');
+      if (!state) throw new Error(noState(resolved));
       const text = args.slice(1).join(' ').trim();
       if (!text) { process.stdout.write((state.baseline?.task || '(none)') + '\n'); return; }
       state.baseline = { task: text, ts: new Date().toISOString(), source: 'manual' };
@@ -88,6 +106,12 @@ function run() {
     default:
       throw new Error(`unknown command ${cmd}`);
   }
+}
+
+function noState(resolved) {
+  return resolved.sessionId
+    ? `no session state for ${resolved.sessionId}; the hooks have not run for this session yet`
+    : 'no session state; the hooks have not run for this project yet';
 }
 
 function probeQuestions() {

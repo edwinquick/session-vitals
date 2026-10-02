@@ -126,29 +126,74 @@ function rememberWindow(model, window) {
   } catch { /* best effort: the session state still carries the window */ }
 }
 
-// Newest state file whose cwd matches, across every root, for the CLI when
-// the skill runs without a session id in hand.
-export function findStateForCwd(cwd) {
-  let best = null;
+// Sessions whose files changed within this window count as live. Without a
+// session id, more than one live session in a directory is ambiguous.
+const LIVE_MS = 2 * 60 * 60 * 1000;
+
+// Which session the CLI is acting for. By id whenever one is known: the
+// shell Claude Code gives the model carries CLAUDE_CODE_SESSION_ID, so the
+// skill always has it. Picking the newest file instead let a second session
+// in the same directory take over the probe, the report and the pins (#8).
+// Without an id (a human at a terminal), the newest session is used only when
+// it is the sole live one; otherwise this refuses and lists the candidates.
+// Returns { state, transcript, sessionId, error }.
+export function resolveSession({ sessionId, cwd, transcript } = {}) {
+  sessionId = sessionId || process.env.CLAUDE_CODE_SESSION_ID || null;
+  if (sessionId) {
+    if (!/^[\w-]+$/.test(sessionId)) return { error: `not a session id: ${sessionId}` };
+    const state = loadState(sessionId);
+    const t = transcript || state?.transcriptPath || transcriptForSession(sessionId, cwd);
+    return { state, transcript: t, sessionId };
+  }
+  const candidates = statesForCwd(cwd);
+  if (!candidates.length) return { state: null, transcript: transcript || guessTranscriptForCwd(cwd), sessionId: null };
+  const live = candidates.filter((c) => Date.now() - c.m < LIVE_MS);
+  if (live.length > 1) {
+    const list = live.map((c) => `  ${c.s.sessionId}  last active ${new Date(c.m).toISOString()}  ${(c.s.baseline?.task || '').slice(0, 60)}`).join('\n');
+    return { error: `${live.length} sessions are active in ${cwd}; pass --session <id> to choose one:\n${list}` };
+  }
+  const state = candidates[0].s;
+  return { state, transcript: transcript || state.transcriptPath, sessionId: state.sessionId, byRecency: true };
+}
+
+// State files for this cwd across every root, newest first.
+function statesForCwd(cwd) {
+  const want = cwd && sameDir(cwd);
+  const out = [];
   for (const root of candidateRoots()) {
     const dir = path.join(root, 'sessions');
     let files; try { files = fs.readdirSync(dir).filter((f) => f.endsWith('.json')); } catch { continue; }
     for (const f of files) {
       const p = path.join(dir, f);
       const s = readJson(p);
-      if (!s) continue;
-      if (cwd && s.cwd !== cwd) continue;
-      const m = fs.statSync(p).mtimeMs;
-      if (!best || m > best.m) best = { m, s: withPath(s, p) };
+      if (!s || (want && !want(s.cwd))) continue;
+      out.push({ m: fs.statSync(p).mtimeMs, s: withPath(s, p) });
     }
   }
-  return best ? best.s : null;
+  return out.sort((a, b) => b.m - a.m);
 }
 
-// Fallback when no hook has run: the newest transcript for this cwd.
+// Hook payloads and shells disagree on drive-letter case on Windows.
+function sameDir(a) {
+  const norm = (p) => { const r = path.resolve(String(p)); return process.platform === 'win32' ? r.toLowerCase() : r; };
+  const na = norm(a);
+  return (b) => !!b && norm(b) === na;
+}
+
+function projectDir(cwd) {
+  return path.join(os.homedir(), '.claude', 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'));
+}
+
+function transcriptForSession(sessionId, cwd) {
+  if (!cwd) return null;
+  const p = path.join(projectDir(cwd), sessionId + '.jsonl');
+  return fs.existsSync(p) ? p : null;
+}
+
+// Fallback when no hook has run and no session id is known: the newest
+// transcript for this cwd.
 export function guessTranscriptForCwd(cwd) {
-  const encoded = cwd.replace(/[^a-zA-Z0-9]/g, '-');
-  const dir = path.join(os.homedir(), '.claude', 'projects', encoded);
+  const dir = projectDir(cwd);
   if (!fs.existsSync(dir)) return null;
   let best = null;
   for (const f of fs.readdirSync(dir)) {

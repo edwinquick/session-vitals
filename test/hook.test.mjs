@@ -20,7 +20,10 @@ function hook(env, payload) {
   return r.stdout;
 }
 function cli(env, args, cwd) {
-  return spawnSync('node', [CLI, ...args], { env: { ...env, CLAUDE_PROJECT_DIR: cwd }, encoding: 'utf8' });
+  const e = { ...env, CLAUDE_PROJECT_DIR: cwd };
+  // The suite may itself run inside a Claude Code session; its id must not leak in.
+  if (e.CLAUDE_CODE_SESSION_ID === process.env.CLAUDE_CODE_SESSION_ID) delete e.CLAUDE_CODE_SESSION_ID;
+  return spawnSync('node', [CLI, ...args], { env: e, encoding: 'utf8' });
 }
 
 test('hooks: session start, prompts, report cadence, pins survive compaction', () => {
@@ -195,11 +198,52 @@ test('a model id seen above 200k is measured against 1M from the next session\'s
   assert.equal(readState('near').contextWindow, 1_000_000);
   const out = hook(env, { ...second, hook_event_name: 'UserPromptSubmit', user_prompt: 'next' });
   assert.ok(!/94%|Context is 9\d% full/.test(out), out);
-  const r = cli(env, ['report', '--json'], '/tmp/proj7');
+  const r = cli({ ...env, CLAUDE_CODE_SESSION_ID: 'near' }, ['report', '--json'], '/tmp/proj7');
   assert.equal(r.status, 0, r.stderr);
   const report = JSON.parse(r.stdout);
   assert.equal(report.vitals.contextWindow, 1_000_000);
   assert.ok(report.vitals.contextPct < 0.2);
+});
+
+test('two sessions in one directory: the CLI acts for its own session id, never the newest file (issue #8)', () => {
+  const { dir, env } = sandbox();
+  const cwd = '/tmp/proj8';
+  const start = (id, transcriptText, prompt) => {
+    const t = path.join(dir, id + '.jsonl');
+    fs.writeFileSync(t, transcriptText);
+    const base = { session_id: id, transcript_path: t, cwd, model: 'claude-fable-5-1' };
+    hook(env, { ...base, hook_event_name: 'SessionStart', startup_reason: 'startup' });
+    hook(env, { ...base, hook_event_name: 'UserPromptSubmit', user_prompt: prompt });
+  };
+  const readState = (id) => JSON.parse(fs.readFileSync(path.join(dir, 'sessions', id + '.json'), 'utf8'));
+  start('sessA', healthySession().text(), 'Fix the upload retry bug.');
+  start('sessB', degradedSession().text(), 'Burn down the true-up list. Never email a business directly.');
+  const before = fs.readFileSync(path.join(dir, 'sessions', 'sessB.json'), 'utf8');
+  const asA = { ...env, CLAUDE_CODE_SESSION_ID: 'sessA' };
+
+  // B wrote last, but A's report, pins and probe stay A's.
+  const rep = cli(asA, ['report', '--json'], cwd);
+  assert.equal(rep.status, 0, rep.stderr);
+  const json = JSON.parse(rep.stdout);
+  assert.ok(json.transcript.endsWith('sessA.jsonl'), json.transcript);
+  assert.deepEqual(json.pins, []);
+  const answers = path.join(dir, 'answers.json');
+  fs.writeFileSync(answers, JSON.stringify({ task: 'Fix the upload retry bug', constraints: [], files: ['upload.ts', 'upload.test.ts'], lastCorrection: null }));
+  const probe = cli(asA, ['probe', '--answers', answers], cwd);
+  assert.equal(probe.status, 0, probe.stderr);
+  assert.doesNotMatch(probe.stdout, /true-up|Never email/);
+  assert.ok(readState('sessA').probe, 'probe stored in the session that ran it');
+  assert.equal(fs.readFileSync(path.join(dir, 'sessions', 'sessB.json'), 'utf8'), before, 'the other session is untouched');
+
+  // --session works from a terminal, and is not swallowed into the pin text.
+  const pin = cli(env, ['pin', 'Keep retries idempotent', '--session', 'sessA'], cwd);
+  assert.equal(pin.status, 0, pin.stderr);
+  assert.deepEqual(readState('sessA').pins.map((p) => p.text), ['Keep retries idempotent']);
+
+  // With no id and two live sessions, refuse and list them rather than guess.
+  const guess = cli(env, ['report'], cwd);
+  assert.notEqual(guess.status, 0);
+  assert.match(guess.stderr, /2 sessions are active[\s\S]*sessA[\s\S]*sessB|2 sessions are active[\s\S]*sessB[\s\S]*sessA/);
 });
 
 test('hook never fails the session on garbage input', () => {

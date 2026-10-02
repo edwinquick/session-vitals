@@ -124,6 +124,8 @@ From a shell, against any transcript:
 node scripts/vitals-cli.mjs report --transcript ~/.claude/projects/<project>/<session>.jsonl
 ```
 
+The CLI always acts for one session, found by id. Inside Claude Code that id comes from `CLAUDE_CODE_SESSION_ID`, so the skill never picks up another session's report, probe or pins, even with several sessions open in the same directory. From a terminal, pass `--session <id>` to any command. Without one, the CLI uses the project's session only when it is the sole one active in the last two hours; otherwise it lists the active sessions and asks you to choose.
+
 To see every warning a finished session would have produced, prompt by prompt, replay it through the hooks:
 
 ```bash
@@ -136,6 +138,7 @@ node scripts/replay.mjs ~/.claude/projects/<project>/<session>.jsonl --window 10
 |---|---|---|
 | `SESSION_VITALS_REPORT_EVERY` | `5` | prompts between routine readouts |
 | `SESSION_VITALS_CONTEXT_WINDOW` | detected | window size in tokens. Detected as 1,000,000 when the model id or the `model` in a Claude settings file carries `[1m]`, once the session has held more than 200k tokens, or when an earlier session on the same model id did (remembered in `windows.json` under the state directory; delete an entry there if that id is now running on a 200k window); otherwise 200,000 |
+| `CLAUDE_CODE_SESSION_ID` | set by Claude Code | the session the CLI acts for; `--session <id>` overrides it |
 | `SESSION_VITALS_HOME` | plugin data dir, else `~/.claude/session-vitals` | where per-session state lives. The CLI also searches `~/.claude/plugins/data/session-vitals*`, so it finds hook state without this being set |
 
 Window thresholds (`recentToolWindow`, `recentPromptWindow`, `thrashRefillFraction`, `thrashWithinPrompts`, `recentCompactionPrompts`) can be overridden in `config.json` under that directory.
