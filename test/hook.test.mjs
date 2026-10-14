@@ -175,7 +175,8 @@ test('a model id seen above 200k is measured against 1M from the next session\'s
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'session-vitals-'));
   const env = { ...process.env, HOME: dir, USERPROFILE: dir, SESSION_VITALS_HOME: path.join(dir, 'sv') };
   delete env.SESSION_VITALS_CONTEXT_WINDOW; delete env.ANTHROPIC_MODEL;
-  const model = 'claude-opus-5-5';
+  // An id with no known native window, e.g. a gateway alias.
+  const model = 'acme-gateway-large';
   const sessionAt = (id, tokens) => {
     const t = path.join(dir, id + '.jsonl');
     const b = new TranscriptBuilder();
@@ -188,7 +189,7 @@ test('a model id seen above 200k is measured against 1M from the next session\'s
   // First session crosses 200k: the window it proved is kept in state and learned for the id.
   const first = sessionAt('big', 450_000);
   hook(env, { ...first, hook_event_name: 'SessionStart', startup_reason: 'startup' });
-  assert.equal(readState('big').contextWindow, 200_000);
+  assert.equal(readState('big').contextWindow, null);
   hook(env, { ...first, hook_event_name: 'UserPromptSubmit', user_prompt: 'next' });
   assert.equal(readState('big').contextWindow, 1_000_000);
 
@@ -203,6 +204,42 @@ test('a model id seen above 200k is measured against 1M from the next session\'s
   const report = JSON.parse(r.stdout);
   assert.equal(report.vitals.contextWindow, 1_000_000);
   assert.ok(report.vitals.contextPct < 0.2);
+});
+
+test('a native-1M model id without "[1m]" at 195k: hook and CLI agree it is not nearly full; a 200k model still warns', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'session-vitals-'));
+  const env = { ...process.env, HOME: dir, USERPROFILE: dir, SESSION_VITALS_HOME: path.join(dir, 'sv') };
+  delete env.SESSION_VITALS_CONTEXT_WINDOW; delete env.ANTHROPIC_MODEL; delete env.SESSION_VITALS_MODEL;
+  const readState = (id) => JSON.parse(fs.readFileSync(path.join(dir, 'sv', 'sessions', id + '.json'), 'utf8'));
+  // payloadModel: what the hook payload says. The transcript always records the API's model id.
+  const runAt = (id, model, payloadModel) => {
+    const t = path.join(dir, id + '.jsonl');
+    const b = new TranscriptBuilder({ model });
+    b.prompt('Burn down the review list.').setContext(195_000).assistantText();
+    fs.writeFileSync(t, b.text());
+    const base = { session_id: id, transcript_path: t, cwd: '/tmp/proj12', ...(payloadModel ? { model: payloadModel } : {}) };
+    hook(env, { ...base, hook_event_name: 'SessionStart', startup_reason: 'startup' });
+    const out = hook(env, { ...base, hook_event_name: 'UserPromptSubmit', user_prompt: 'next' });
+    const r = cli({ ...env, CLAUDE_CODE_SESSION_ID: id }, ['report', '--json'], '/tmp/proj12');
+    assert.equal(r.status, 0, r.stderr);
+    return { out, report: JSON.parse(r.stdout) };
+  };
+
+  for (const [id, payloadModel] of [['opus-payload', 'claude-opus-5-5'], ['opus-transcript-only', null]]) {
+    const { out, report } = runAt(id, 'claude-opus-5-5', payloadModel);
+    assert.ok(!/degraded|9\d% full/.test(out), out);
+    assert.equal(readState(id).contextWindow, 1_000_000);
+    assert.equal(report.vitals.contextWindow, 1_000_000);
+    assert.notEqual(report.result.tier, 'degraded');
+    assert.ok(!(report.result.signals.find((s) => s.key === 'context')?.severity >= 3));
+  }
+  // Nothing was proved above 200k, so nothing is learned for the id.
+  assert.ok(!fs.existsSync(path.join(dir, 'sv', 'windows.json')));
+
+  const { out, report } = runAt('haiku', 'claude-haiku-4-5', 'claude-haiku-4-5');
+  assert.match(JSON.parse(out).systemMessage, /Session vitals: degraded\. Context 98% full/);
+  assert.equal(report.vitals.contextWindow, 200_000);
+  assert.equal(report.result.tier, 'degraded');
 });
 
 test('two sessions in one directory: the CLI acts for its own session id, never the newest file (issue #8)', () => {

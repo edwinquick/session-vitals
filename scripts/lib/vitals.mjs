@@ -2,9 +2,14 @@
 // model being measured cannot bias them (the clinical analogue is the AD8
 // informant questionnaire, versus the patient's own MMSE answers).
 import crypto from 'node:crypto';
+import { modelFromEvents } from './transcript.mjs';
+
+// The smallest window a current model has. Holding more than this proves a
+// 1M window; below it an unknown window could be either.
+export const SMALL_WINDOW = 200_000;
 
 export const DEFAULTS = {
-  contextWindow: 200_000,
+  contextWindow: null, // null: unknown, so fill is not scored as a percentage
   recentToolWindow: 30,
   recentPromptWindow: 6,
   thrashRefillFraction: 0.5,
@@ -146,10 +151,15 @@ export function computeVitals(events, opts = {}) {
 
   const contextTokens = usages.length ? usages[usages.length - 1].contextTokens : 0;
   const peakContextTokens = usages.reduce((m, u) => Math.max(m, u.contextTokens), 0);
-  // The hook payload does not always carry a model id. If the session has
-  // already held more than the assumed window, it must be a 1M-window model.
-  if (peakContextTokens > o.contextWindow) o.contextWindow = 1_000_000;
-  const contextPct = o.contextWindow ? contextTokens / o.contextWindow : 0;
+  // A session that has held more than its assumed window, or more than 200k
+  // when the window is unknown, must be on a 1M window.
+  let contextWindowObserved = false;
+  if (peakContextTokens > (o.contextWindow || SMALL_WINDOW)) { o.contextWindow = 1_000_000; contextWindowObserved = true; }
+  // null when the window is unknown: a percentage of a guessed 200k would
+  // read a 1M session at 195k as nearly full.
+  const contextPct = o.contextWindow ? contextTokens / o.contextWindow : null;
+  // Thresholds that need some window fall back to the smallest one.
+  const scaleWindow = o.contextWindow || SMALL_WINDOW;
 
   const recentTools = toolUses.slice(-o.recentToolWindow);
   const errRate = (arr) => (arr.length ? arr.filter((t) => t.isError).length / arr.length : 0);
@@ -204,7 +214,7 @@ export function computeVitals(events, opts = {}) {
   if (lastCompaction) {
     const after = usages.filter((u) => u.seq > lastCompaction.seq && u.promptIndex - lastCompaction.promptIndex <= o.thrashWithinPrompts);
     const peakAfter = after.reduce((m, u) => Math.max(m, u.contextTokens), 0);
-    fastRefill = peakAfter >= o.thrashRefillFraction * o.contextWindow;
+    fastRefill = peakAfter >= o.thrashRefillFraction * scaleWindow;
   }
   for (let i = 1; i < compactions.length; i++) {
     if (compactions[i].promptIndex - compactions[i - 1].promptIndex <= o.thrashWithinPrompts && prompts.length - compactions[i].promptIndex <= o.recentCompactionPrompts) thrashing = true;
@@ -215,7 +225,8 @@ export function computeVitals(events, opts = {}) {
   const recentCompactions = compactions.filter((c) => prompts.length - c.promptIndex <= o.recentCompactionPrompts).length;
 
   return {
-    contextWindow: o.contextWindow,
+    contextWindow: o.contextWindow, contextWindowObserved,
+    model: modelFromEvents(events),
     contextTokens, contextPct, peakContextTokens,
     prompts: prompts.length,
     toolCalls: toolUses.length,

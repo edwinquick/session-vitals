@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { parseTranscriptText } from '../scripts/lib/transcript.mjs';
 import { computeVitals, isCorrection, extractConstraintCandidates, shellEditTargets } from '../scripts/lib/vitals.mjs';
 import { scoreVitals, formatOneLine, formatReport, suggestCommand } from '../scripts/lib/rubric.mjs';
+import { nativeContextWindow } from '../scripts/lib/state.mjs';
 import { healthySession, degradedSession, thrashingSession, TranscriptBuilder } from './fixtures/make-transcript.mjs';
 
 const run = (b) => { const v = computeVitals(parseTranscriptText(b.text()), { contextWindow: 200_000 }); return { v, r: scoreVitals(v) }; };
@@ -223,6 +224,49 @@ test('window is inferred as 1M when the session has already exceeded 200k', () =
   const v = computeVitals(parseTranscriptText(b.text()), { contextWindow: 200_000 });
   assert.equal(v.contextWindow, 1_000_000);
   assert.ok(v.contextPct < 0.5);
+});
+
+test('native window comes from the model id, and not every model is 1M', () => {
+  const cases = [
+    ['claude-opus-5-5', 1_000_000], ['claude-fable-5-1', 1_000_000], ['claude-mythos-5-1', 1_000_000],
+    ['claude-sonnet-5-5', 1_000_000], ['claude-haiku-5-5', 1_000_000], ['claude-opus-5', 1_000_000],
+    ['claude-opus-4-8', 1_000_000], ['claude-opus-4-6', 1_000_000], ['claude-sonnet-4-6', 1_000_000],
+    ['us.anthropic.claude-opus-5-5', 1_000_000], ['claude-opus-5-5[1m]', 1_000_000],
+    ['claude-haiku-4-5', 200_000], ['claude-haiku-4-5-20251001', 200_000], ['claude-sonnet-4-5', 200_000],
+    ['anthropic.claude-sonnet-4-5-20250929-v1:0', 200_000], ['claude-opus-4-5@20251101', 200_000],
+    ['claude-opus-4-1-20250805', 200_000], ['claude-opus-4-20250514', 200_000], ['claude-3-5-sonnet-20241022', 200_000],
+    ['opus', null], ['acme-gateway-large', null], [null, null],
+  ];
+  for (const [id, want] of cases) assert.equal(nativeContextWindow(id), want, String(id));
+});
+
+test('a 1M model at 195k is not "nearly full"; a 200k model at 195k is; an unknown window never escalates on fill alone', () => {
+  const at = (model, tokens) => {
+    const b = new TranscriptBuilder({ model });
+    b.prompt('Burn down the review list.').setContext(tokens).assistantText();
+    const v = computeVitals(parseTranscriptText(b.text()), { contextWindow: nativeContextWindow(model) });
+    return { v, r: scoreVitals(v) };
+  };
+  const ctxSev = (r) => r.signals.find((s) => s.key === 'context')?.severity || 0;
+
+  const big = at('claude-opus-5-5', 195_000);
+  assert.equal(big.v.contextWindow, 1_000_000);
+  assert.ok(ctxSev(big.r) < 3);
+  assert.notEqual(big.r.tier, 'degraded');
+  assert.equal(big.v.model, 'claude-opus-5-5');
+
+  const small = at('claude-haiku-4-5', 195_000);
+  assert.equal(ctxSev(small.r), 3);
+  assert.match(formatOneLine(small.r, small.v), /Context 98% full/);
+
+  const unknown = at('acme-gateway-large', 195_000);
+  assert.equal(unknown.v.contextWindow, null);
+  assert.equal(unknown.v.contextPct, null);
+  assert.ok(ctxSev(unknown.r) <= 1);
+  assert.ok(!['degraded', 'critical'].includes(unknown.r.tier));
+  const report = formatReport(unknown.r, unknown.v);
+  assert.match(report, /holds 19\dk tokens; the window size is unknown/);
+  assert.ok(!/\d+% full/.test(report), report);
 });
 
 test('shell edit detector finds common write shapes and ignores reads, pipes and scratch (issue #5)', () => {

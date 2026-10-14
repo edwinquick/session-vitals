@@ -61,11 +61,18 @@ export function parseTranscriptText(raw) {
       if (msg.usage && !seenRequests.has(reqKey)) {
         seenRequests.add(reqKey);
         const ctx = contextTokensFromUsage(msg.usage);
-        if (ctx > 0) events.push({ kind: 'usage', ts, contextTokens: ctx, outputTokens: outputTokensFromUsage(msg.usage) });
+        if (ctx > 0) events.push({ kind: 'usage', ts, contextTokens: ctx, outputTokens: outputTokensFromUsage(msg.usage), model: typeof msg.model === 'string' ? msg.model : null });
       }
     }
   }
   return events;
+}
+
+// The model id the API reported for the latest main-chain turn. The hook
+// payload does not always carry one, and a manual CLI run never does.
+export function modelFromEvents(events) {
+  for (let i = events.length - 1; i >= 0; i--) if (events[i].kind === 'usage' && events[i].model && !events[i].model.startsWith('<')) return events[i].model;
+  return null;
 }
 
 function isRealPrompt(text, row) {

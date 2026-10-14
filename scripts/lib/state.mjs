@@ -55,7 +55,8 @@ export function newState(input) {
     transcriptPath: input.transcript_path || null,
     cwd: input.cwd || null,
     model: input.model || null,
-    contextWindow: detectContextWindow(input.model, input.cwd),
+    contextWindow: contextWindowFor({ models: [input.model], cwd: input.cwd }),
+    observedWindow: null,
     startedAt: new Date().toISOString(),
     baseline: null,
     pins: [],
@@ -66,12 +67,36 @@ export function newState(input) {
   };
 }
 
-// Neither the hook payload nor the transcript reliably carries the "[1m]"
-// suffix, so also look at the settings files that could have set it, and at
-// model ids this machine has already seen hold more than 200k tokens. Below
-// 200k a 1M session looks exactly like a full 200k one, so without that memory
-// the first readings of every such session would be measured against 200k.
-// computeVitals has a further fallback for the session that first crosses it.
+// Native windows by model id, per Anthropic's model overview (checked
+// 2026-10-14). First match wins. Ids are matched after dropping provider
+// prefixes ("us.anthropic."), so dated, Bedrock and Vertex forms all match.
+// Not every model is 1M: Haiku 4.5 and everything before Opus/Sonnet 4.6 is
+// 200k unless run with the "[1m]" long-context option. A later major version
+// of a 1M family is assumed to keep at least 1M.
+const NATIVE_WINDOWS = [
+  [/^claude-(?:fable|mythos)-(?:[5-9]|\d\d)(?!\d)/, 1_000_000],
+  [/^claude-(?:opus|sonnet|haiku)-(?:[5-9]|\d\d)(?!\d)/, 1_000_000],
+  [/^claude-(?:opus|sonnet)-4-[6-9](?!\d)/, 1_000_000],
+  [/^claude-(?:opus|sonnet|haiku)-4(?!\d)/, 200_000],
+  [/^claude-[1-3](?!\d)/, 200_000],
+];
+
+export function nativeContextWindow(model) {
+  if (!model) return null;
+  const id = String(model).toLowerCase().replace(/\[1m\]$/, '');
+  const at = id.indexOf('claude-');
+  if (at < 0) return null;
+  const bare = id.slice(at);
+  for (const [re, window] of NATIVE_WINDOWS) if (re.test(bare)) return window;
+  return null;
+}
+
+// The window for one model id, or null when nothing says what it is. Below
+// 200k a 1M session looks exactly like a full 200k one, so guessing 200k for
+// an unknown id is what made a 1M session at 195k read as "97% full". In
+// order: the explicit override, the "[1m]" suffix, a window this machine has
+// already seen the id hold, a "[1m]" model in a settings file, the native
+// window of a known id.
 export function detectContextWindow(model, cwd) {
   if (process.env.SESSION_VITALS_CONTEXT_WINDOW) return Number(process.env.SESSION_VITALS_CONTEXT_WINDOW);
   if (model && /\[1m\]|-1m\b|1m$/i.test(model)) return 1_000_000;
@@ -87,18 +112,44 @@ export function detectContextWindow(model, cwd) {
     if (s && typeof s.model === 'string' && /\[1m\]/i.test(s.model)) return 1_000_000;
   }
   if (process.env.ANTHROPIC_MODEL && /\[1m\]/i.test(process.env.ANTHROPIC_MODEL)) return 1_000_000;
-  return 200_000;
+  return nativeContextWindow(model);
 }
 
-// Raise the session's window to what the transcript proved (computeVitals
-// upgrades it once more than 200k tokens were held) and remember the model id,
-// so the hook, the CLI and later sessions on the same id all agree. Returns
-// true when the state changed and should be saved.
+// The one place the hook and the CLI get a session's window from, so they
+// cannot disagree. models: every id known for the session (the hook payload's
+// and the transcript's), since either may lack the "[1m]" suffix. The largest
+// window wins, as does a window the session already proved by holding more
+// than 200k tokens. Returns null when the window is unknown.
+export function contextWindowFor({ models = [], cwd, state } = {}) {
+  if (process.env.SESSION_VITALS_CONTEXT_WINDOW) return Number(process.env.SESSION_VITALS_CONTEXT_WINDOW);
+  const ids = [...new Set([...models, state?.model].filter(Boolean))];
+  let best = ids.length ? null : detectContextWindow(null, cwd);
+  for (const id of ids) best = Math.max(best ?? 0, detectContextWindow(id, cwd) ?? 0) || null;
+  const observed = observedWindow(state);
+  return observed && observed > (best ?? 0) ? observed : best;
+}
+
+// State files from 0.1.5 and earlier have no observedWindow and stored the
+// 200k guess in contextWindow, so only a window above 200k there was proved.
+function observedWindow(state) {
+  if (!state) return null;
+  if (state.observedWindow) return state.observedWindow;
+  return state.contextWindow > 200_000 ? state.contextWindow : null;
+}
+
+// Keep the window the transcript proved (computeVitals upgrades it once more
+// than 200k tokens were held) and remember the model id, so later sessions on
+// the same id start from it. Returns true when the state changed and should
+// be saved.
 export function adoptObservedWindow(state, vitals) {
   if (process.env.SESSION_VITALS_CONTEXT_WINDOW) return false;
-  if (!(vitals.contextWindow > (state.contextWindow || 0))) return false;
+  if (!vitals.contextWindow || vitals.contextWindow === state.contextWindow) return false;
   state.contextWindow = vitals.contextWindow;
-  if (state.model) rememberWindow(state.model, vitals.contextWindow);
+  if (vitals.contextWindowObserved) {
+    state.observedWindow = vitals.contextWindow;
+    const model = state.model || vitals.model;
+    if (model) rememberWindow(model, vitals.contextWindow);
+  }
   return true;
 }
 

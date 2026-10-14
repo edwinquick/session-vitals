@@ -3,10 +3,10 @@
 // hook_event_name. Never throws to the caller: a broken measurement must not
 // break the session it is measuring.
 import fs from 'node:fs';
-import { parseTranscript } from './lib/transcript.mjs';
+import { parseTranscript, modelFromEvents } from './lib/transcript.mjs';
 import { computeVitals, extractConstraintCandidates } from './lib/vitals.mjs';
 import { scoreVitals, formatOneLine, suggestCommand } from './lib/rubric.mjs';
-import { loadState, saveState, newState, loadConfig, adoptObservedWindow } from './lib/state.mjs';
+import { loadState, saveState, newState, loadConfig, adoptObservedWindow, contextWindowFor } from './lib/state.mjs';
 
 const REPORT_EVERY = Number(process.env.SESSION_VITALS_REPORT_EVERY || 5);
 const MAX_AUTO_PINS = 12;
@@ -23,7 +23,8 @@ async function main() {
   const state = loadState(input.session_id) || newState(input);
   state.transcriptPath = input.transcript_path || state.transcriptPath;
   state.cwd = input.cwd || state.cwd;
-  if (input.model) { state.model = input.model; state.contextWindow = Math.max(state.contextWindow || 0, newState(input).contextWindow); }
+  if (input.model) state.model = input.model;
+  state.contextWindow = contextWindowFor({ cwd: state.cwd, state });
 
   switch (event) {
     case 'SessionStart': return onSessionStart(input, state);
@@ -144,7 +145,7 @@ function onStop(input, state, config) {
 function measure(state, config) {
   if (!state.transcriptPath || !fs.existsSync(state.transcriptPath)) return null;
   const events = parseTranscript(state.transcriptPath);
-  const vitals = computeVitals(events, { ...config, contextWindow: state.contextWindow });
+  const vitals = computeVitals(events, { ...config, contextWindow: contextWindowFor({ models: [modelFromEvents(events)], cwd: state.cwd, state }) });
   adoptObservedWindow(state, vitals); // callers save state after measuring
   const probe = state.probe && !state.probe.stale && vitals.prompts - state.probe.promptIndex <= 10 ? state.probe : null;
   const result = scoreVitals(vitals, probe);
