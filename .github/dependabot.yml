@@ -1,0 +1,12 @@
+# The plugin has no npm dependencies, so only the CI actions are watched.
+# Actions are pinned to commit SHAs; Dependabot keeps the SHA and the
+# version comment in step.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
