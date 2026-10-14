@@ -137,11 +137,28 @@ node scripts/replay.mjs ~/.claude/projects/<project>/<session>.jsonl --window 10
 | Variable | Default | Meaning |
 |---|---|---|
 | `SESSION_VITALS_REPORT_EVERY` | `5` | prompts between routine readouts |
-| `SESSION_VITALS_CONTEXT_WINDOW` | detected | window size in tokens. Detected as 1,000,000 when the model id or the `model` in a Claude settings file carries `[1m]`, once the session has held more than 200k tokens, or when an earlier session on the same model id did (remembered in `windows.json` under the state directory; delete an entry there if that id is now running on a 200k window); otherwise 200,000 |
+| `SESSION_VITALS_CONTEXT_WINDOW` | detected | window size in tokens; overrides detection entirely (see [Context window](#context-window)) |
+| `SESSION_VITALS_MODEL` | none | model id for the CLI to assume when it reads a transcript that records none |
 | `CLAUDE_CODE_SESSION_ID` | set by Claude Code | the session the CLI acts for; `--session <id>` overrides it |
 | `SESSION_VITALS_HOME` | plugin data dir, else `~/.claude/session-vitals` | where per-session state lives. The CLI also searches `~/.claude/plugins/data/session-vitals*`, so it finds hook state without this being set |
 
 Window thresholds (`recentToolWindow`, `recentPromptWindow`, `thrashRefillFraction`, `thrashWithinPrompts`, `recentCompactionPrompts`) can be overridden in `config.json` under that directory.
+
+### Context window
+
+Context fill is scored against the session's real window. The hook and the CLI work it out the same way, from the model id in the hook payload and the one the transcript records, in this order:
+
+1. `SESSION_VITALS_CONTEXT_WINDOW`, if set.
+2. `[1m]` on the model id, or on the `model` in a Claude settings file or `ANTHROPIC_MODEL`: 1,000,000.
+3. A window this machine has already seen the model id hold (remembered in `windows.json` under the state directory once a session on it passes 200k tokens; delete an entry if that id now runs on a 200k window).
+4. The model's native window from its id. Claude Fable 5.x, Mythos 5.x, Opus 5.x, Sonnet 5.x, Haiku 5.x, Opus 4.6 to 4.8 and Sonnet 4.6 are 1M; Haiku 4.5, Sonnet 4.5, Opus 4.5 and older are 200k.
+5. Otherwise the window is **unknown**. Below 200k tokens a 1M session and a full 200k one look the same, so the report gives the token count instead of a percentage and fill alone never raises the tier. Past 200k the session has proved a 1M window and is scored against it.
+
+**Escape hatch.** If the window is wrong or unknown (a gateway alias, a new model id, a model run with a long-context option the id does not show), set it yourself, for example in the `env` block of your Claude Code settings:
+
+```json
+{ "env": { "SESSION_VITALS_CONTEXT_WINDOW": "1000000" } }
+```
 
 ## Design notes
 

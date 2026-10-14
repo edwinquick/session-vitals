@@ -3,9 +3,10 @@ let n = 0;
 const id = () => 'u' + (++n).toString(36).padStart(6, '0');
 
 export class TranscriptBuilder {
-  constructor({ sessionId = 'sess-test', startMs = Date.parse('2026-09-01T10:00:00Z') } = {}) {
+  constructor({ sessionId = 'sess-test', startMs = Date.parse('2026-09-01T10:00:00Z'), model = null } = {}) {
     this.rows = [];
     this.sessionId = sessionId;
+    this.model = model; // real transcripts carry message.model on assistant rows
     this.t = startMs;
     this.ctx = 12_000;
   }
@@ -20,13 +21,13 @@ export class TranscriptBuilder {
   meta(text) { return this.prompt(text, { isMeta: true }); }
   assistantText(text = 'Working on it.', grow = 1500) {
     this.ctx += grow;
-    this.rows.push(this.base({ type: 'assistant', requestId: id(), message: { role: 'assistant', content: [{ type: 'text', text }], usage: this.usage() } }));
+    this.rows.push(this.base({ type: 'assistant', requestId: id(), message: { ...this.modelField(), role: 'assistant', content: [{ type: 'text', text }], usage: this.usage() } }));
     return this;
   }
   tool(name, input, { error = false, grow = 2500, sidechain = false } = {}) {
     const tid = 'toolu_' + id();
     this.ctx += grow;
-    this.rows.push(this.base({ type: 'assistant', isSidechain: sidechain, requestId: id(), message: { role: 'assistant', content: [{ type: 'tool_use', id: tid, name, input }], usage: this.usage() } }));
+    this.rows.push(this.base({ type: 'assistant', isSidechain: sidechain, requestId: id(), message: { ...this.modelField(), role: 'assistant', content: [{ type: 'tool_use', id: tid, name, input }], usage: this.usage() } }));
     this.rows.push(this.base({ type: 'user', isSidechain: sidechain, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: tid, content: error ? 'Exit code 1' : 'ok', is_error: error }] } }));
     return this;
   }
@@ -37,6 +38,7 @@ export class TranscriptBuilder {
     this.rows.push(this.base({ type: 'user', isCompactSummary: true, isVisibleInTranscriptOnly: true, message: { role: 'user', content: 'This session is being continued from a previous conversation that ran out of context. Summary: ...' } }));
     return this;
   }
+  modelField() { return this.model ? { model: this.model } : {}; }
   setContext(tokens) { this.ctx = tokens; return this; }
   usage() {
     return { input_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 0, iterations: [{ input_tokens: 40, cache_read_input_tokens: this.ctx - 200, cache_creation_input_tokens: 160, output_tokens: 90 }] };

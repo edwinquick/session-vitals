@@ -17,8 +17,15 @@ export function scoreVitals(v, probe = null) {
   const plural = (n, one, many = one + 's') => `${n} ${n === 1 ? one : many}`;
 
   const pct = v.contextPct;
-  const pctStr = `${Math.round(pct * 100)}%`;
-  add('context', pct > 0.9 ? 3 : pct > 0.75 ? 2 : pct > 0.55 ? 1 : 0, `Context is ${pctStr} full (${fmtK(v.contextTokens)} of ${fmtK(v.contextWindow)})`, `context ${pctStr} full`);
+  if (pct == null) {
+    // Unknown window: a 1M session at 195k and a 200k session at 195k look
+    // the same, so fill alone never escalates. A mild note once it would be
+    // heavy for a 200k window, saying how to set the window.
+    add('context', v.contextTokens > 150_000 ? 1 : 0, `Context holds ${fmtK(v.contextTokens)} tokens; the window size is unknown, so fill is not scored (set SESSION_VITALS_CONTEXT_WINDOW)`, `${fmtK(v.contextTokens)} tokens, window unknown`);
+  } else {
+    const pctStr = `${Math.round(pct * 100)}%`;
+    add('context', pct > 0.9 ? 3 : pct > 0.75 ? 2 : pct > 0.55 ? 1 : 0, `Context is ${pctStr} full (${fmtK(v.contextTokens)} of ${fmtK(v.contextWindow)})`, `context ${pctStr} full`);
+  }
 
   const n = v.compactions.length;
   const rc = v.recentCompactions ?? n;
@@ -162,7 +169,7 @@ export function suggestCommand(result, v, state = {}) {
 // of advice, then the command to act on it when there is one.
 export function formatOneLine(result, v, state) {
   const top = sorted(result.signals).slice(0, 3).map((s) => s.short).join(' · ');
-  const evidence = top ? `${top[0].toUpperCase()}${top.slice(1)}.` : `Context ${Math.round(v.contextPct * 100)}% full, nothing else showing.`;
+  const evidence = top ? `${top[0].toUpperCase()}${top.slice(1)}.` : `${contextFill(v)}, nothing else showing.`;
   const line = `Session vitals: ${result.tier}. ${evidence} Suggest: ${ACTION_LABEL[result.recommendation.action]}. /vitals for details.`;
   const cmd = state ? suggestCommand(result, v, state) : null;
   return cmd ? `${line}\n${formatCommand(cmd, '')}` : line;
@@ -181,7 +188,7 @@ export function formatReport(result, v, state = {}) {
     lines.push("What's showing");
     for (const s of sorted(result.signals)) lines.push(`  ${DOTS[s.severity]}  ${s.detail}`);
   } else {
-    lines.push(`Nothing showing. Context ${Math.round(v.contextPct * 100)}% full (${fmtK(v.contextTokens)} of ${fmtK(v.contextWindow)}).`);
+    lines.push(`Nothing showing. ${contextFill(v, true)}.`);
   }
   if (action !== 'continue' || result.tier !== 'healthy') {
     lines.push('');
@@ -211,6 +218,11 @@ export function formatReport(result, v, state = {}) {
 }
 
 function plural2(n, one, many = one + 's') { return `${n} ${n === 1 ? one : many}`; }
+
+function contextFill(v, detail = false) {
+  if (v.contextPct == null) return `Context holds ${fmtK(v.contextTokens)} tokens (window size unknown)`;
+  return `Context ${Math.round(v.contextPct * 100)}% full${detail ? ` (${fmtK(v.contextTokens)} of ${fmtK(v.contextWindow)})` : ''}`;
+}
 
 function fmtK(n) { return n >= 1000 ? Math.round(n / 1000) + 'k' : String(n); }
 function shortPath(p) { const parts = String(p).split(/[\\/]/); return parts.slice(-2).join('/'); }

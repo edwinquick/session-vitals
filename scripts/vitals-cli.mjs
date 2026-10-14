@@ -11,10 +11,10 @@
 // from CLAUDE_CODE_SESSION_ID, so the flag is only needed from a terminal.
 import fs from 'node:fs';
 import path from 'node:path';
-import { parseTranscript } from './lib/transcript.mjs';
+import { parseTranscript, modelFromEvents } from './lib/transcript.mjs';
 import { computeVitals } from './lib/vitals.mjs';
 import { scoreVitals, formatReport } from './lib/rubric.mjs';
-import { resolveSession, saveState, loadConfig, detectContextWindow, adoptObservedWindow } from './lib/state.mjs';
+import { resolveSession, saveState, loadConfig, contextWindowFor, adoptObservedWindow } from './lib/state.mjs';
 
 // Options that take a value are pulled out first, so `pin "x" --session id`
 // pins "x" and not the flag.
@@ -47,7 +47,7 @@ function run() {
       if (!transcript || !fs.existsSync(transcript)) throw new Error('no transcript found; pass --transcript <path>');
       const config = loadConfig();
       const events = parseTranscript(transcript);
-      const vitals = computeVitals(events, { ...config, contextWindow: state?.contextWindow || detectContextWindow(process.env.SESSION_VITALS_MODEL, cwd) });
+      const vitals = computeVitals(events, { ...config, contextWindow: windowFor(events, state, cwd) });
       if (state && adoptObservedWindow(state, vitals)) state = saveState(state);
       const probe = state?.probe && !state.probe.stale && vitals.prompts - state.probe.promptIndex <= 10 ? state.probe : null;
       const result = scoreVitals(vitals, probe);
@@ -61,7 +61,7 @@ function run() {
       if (!answersPath) { process.stdout.write(probeQuestions()); return; }
       const answers = JSON.parse(fs.readFileSync(answersPath, 'utf8'));
       const events = transcript && fs.existsSync(transcript) ? parseTranscript(transcript) : [];
-      const vitals = computeVitals(events, { contextWindow: state.contextWindow });
+      const vitals = computeVitals(events, { contextWindow: windowFor(events, state, cwd) });
       adoptObservedWindow(state, vitals);
       const scored = scoreProbe(answers, state, vitals);
       state.probe = { ...scored, promptIndex: vitals.prompts, ts: new Date().toISOString(), stale: false, answers };
@@ -106,6 +106,13 @@ function run() {
     default:
       throw new Error(`unknown command ${cmd}`);
   }
+}
+
+// Same resolution as the hook's, so the two never score one session against
+// different windows. SESSION_VITALS_MODEL names the model for a transcript
+// read without any session state.
+function windowFor(events, state, cwd) {
+  return contextWindowFor({ models: [modelFromEvents(events), process.env.SESSION_VITALS_MODEL], cwd: state?.cwd || cwd, state });
 }
 
 function noState(resolved) {
