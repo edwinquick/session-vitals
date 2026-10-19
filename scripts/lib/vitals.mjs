@@ -181,7 +181,7 @@ export function computeVitals(events, opts = {}) {
   const recentErrorRate = errRate(recentTools);
   const overallErrorRate = errRate(toolUses);
 
-  // Identical consecutive calls: same tool, same input, within one turn.
+  // Identical consecutive calls after a failure: same tool, same input, within one turn.
   // Retrying the same failing command is the canonical loop signature. A
   // user prompt between two identical calls means the world changed (a
   // screenshot per "next screen is up"), so that pair is an observation.
@@ -272,11 +272,15 @@ export function computeVitals(events, opts = {}) {
   };
 }
 
+// A retry repeats a call that just failed. Repeating one that succeeded is
+// polling (App Store review status, PR checks) or observing, not a loop.
 function countRetryRuns(tools) {
-  const same = (a, b) => a.hash === b.hash && a.promptIndex === b.promptIndex;
-  let runs = 0;
+  let runs = 0, inRun = false;
   for (let i = 1; i < tools.length; i++) {
-    if (same(tools[i], tools[i - 1]) && (i === 1 || !same(tools[i - 1], tools[i - 2]))) runs++;
+    const prev = tools[i - 1];
+    const retry = prev.isError && tools[i].hash === prev.hash && tools[i].promptIndex === prev.promptIndex;
+    if (retry && !inRun) runs++;
+    inRun = retry;
   }
   return runs;
 }

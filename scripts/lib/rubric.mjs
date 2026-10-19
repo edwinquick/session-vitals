@@ -51,8 +51,10 @@ export function scoreVitals(v, probe = null) {
   const c = v.recentCorrections;
   add('corrections', c >= 3 ? 3 : c === 2 ? 2 : c === 1 ? 1 : 0, `You corrected it ${c === 1 ? 'once' : c + ' times'} in the last 6 prompts${v.totalCorrections > c ? ` (${v.totalCorrections} in total)` : ''}`, `${plural(c, 'correction')} in 6 prompts`);
 
+  // Capped at 1: a guided session (dashboards, console setup, PR watching)
+  // makes no edits by nature, so this only corroborates other signals.
   if (v.everProgressed && v.promptsSinceProgress !== null) {
-    add('stalled', v.promptsSinceProgress >= 12 ? 2 : v.promptsSinceProgress >= 6 ? 1 : 0, `${v.promptsSinceProgress} prompts since the last edit or commit`, 'no edits lately');
+    add('stalled', v.promptsSinceProgress >= 6 ? 1 : 0, `${v.promptsSinceProgress} prompts since the last edit or commit`, 'no edits lately');
   }
 
   add('api_errors', v.apiErrors >= 2 ? 1 : 0, `${plural(v.apiErrors, 'API error')} this session`, plural(v.apiErrors, 'API error'));
@@ -87,6 +89,9 @@ function recommend(tier, sev, v) {
     }
     if (!memoryProblem && v.fastRefill) {
       return { action: 'handoff', why: 'The window refilled to half within a few prompts of the last compaction, so another compaction buys very little. Hand off and delegate bulk reads to subagents in the fresh session.', how: 'Write a handoff doc, then /clear and paste it; use subagents for exploration' };
+    }
+    if (sev('corrections') + sev('probe') + sev('retry_loops') === 0) {
+      return { action: 'continue', label: 'carry on, but check what is failing', why: 'The signals point at the environment (failing tools or API errors), not at the session losing track. A fresh session would hit the same failures; check what is failing first.', how: 'Look at the failing command or service before changing sessions' };
     }
     return { action: 'handoff', why: 'Signals point at lost understanding rather than a full window. A fresh session with a handoff doc is cheaper than re-correcting this one.', how: 'Write a handoff doc, then /clear and paste it' };
   }
@@ -127,7 +132,7 @@ export function suggestCommand(result, v, state = {}) {
   const filesStr = files.length ? files.join(', ') + (v.editedFiles.length > 6 ? ` and ${v.editedFiles.length - 6} more` : '') : '';
 
   if (action === 'continue') {
-    if (result.tier === 'healthy') return null;
+    if (result.tier !== 'watch') return null;
     const candidate = pins.find((p) => p.source === 'auto');
     if (pins.some((p) => p.source !== 'auto')) return null;
     return candidate
@@ -170,7 +175,7 @@ export function suggestCommand(result, v, state = {}) {
 export function formatOneLine(result, v, state) {
   const top = sorted(result.signals).slice(0, 3).map((s) => s.short).join(' · ');
   const evidence = top ? `${top[0].toUpperCase()}${top.slice(1)}.` : `${contextFill(v)}, nothing else showing.`;
-  const line = `Session vitals: ${result.tier}. ${evidence} Suggest: ${ACTION_LABEL[result.recommendation.action]}. /vitals for details.`;
+  const line = `Session vitals: ${result.tier}. ${evidence} Suggest: ${result.recommendation.label || ACTION_LABEL[result.recommendation.action]}. /vitals for details.`;
   const cmd = state ? suggestCommand(result, v, state) : null;
   return cmd ? `${line}\n${formatCommand(cmd, '')}` : line;
 }
@@ -182,7 +187,7 @@ function formatCommand(cmd, indent) {
 export function formatReport(result, v, state = {}) {
   const lines = [];
   const action = result.recommendation.action;
-  lines.push(`SESSION VITALS: ${result.tier} → ${ACTION_LABEL[action]}`);
+  lines.push(`SESSION VITALS: ${result.tier} → ${result.recommendation.label || ACTION_LABEL[action]}`);
   lines.push('');
   if (result.signals.length) {
     lines.push("What's showing");

@@ -34,7 +34,7 @@ The research is ahead of the tooling here. Context rot is measured ([Chroma, 202
 | context fill | how full the window is, against the model's real window size |
 | compaction recency, fast refill, thrashing | compactions that buy only a few prompts before the next one |
 | tool error rate and its slope | a debugging loop that is getting worse, not better |
-| identical retry runs | the same command with the same input, again, within one turn |
+| identical retry runs | a failed command run again with the same input, within one turn |
 | re-read files | the same file read three or more times in the recent window |
 | user corrections | prompts opening with "no", "I meant", "you already", "again", "your context is stale" |
 | prompts since progress | a session that has stopped editing or committing, counting edits made through shell commands (`sed -i`, redirects, `tee`, `Set-Content`, scripts that write files) as well as the Edit and Write tools |

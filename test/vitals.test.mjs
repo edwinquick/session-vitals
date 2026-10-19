@@ -34,12 +34,12 @@ test('healthy session scores healthy and recommends continue', () => {
 test('degraded session: rereads, retry loop, errors, corrections are all detected', () => {
   const { v, r } = run(degradedSession());
   assert.equal(v.rereadFiles.length, 1);
-  assert.ok(v.retryRuns >= 2, `retry runs ${v.retryRuns}`);
+  assert.equal(v.retryRuns, 1, 'the failing npm test repeated; the repeated Reads succeeded and count as rereads instead');
   assert.equal(v.recentCorrections, 2);
   assert.ok(v.recentErrorRate > 0.25);
   assert.ok(v.contextPct > 0.75);
   assert.ok(['degraded', 'critical'].includes(r.tier), r.tier);
-  // Memory signals (corrections at 2, retries at 2) mean compaction would not help.
+  // Memory signals (corrections at 2, a retry loop) mean compaction would not help.
   assert.notEqual(r.recommendation.action, 'compact');
   assert.ok(['handoff', 'abandon'].includes(r.recommendation.action), r.recommendation.action);
 });
@@ -61,14 +61,37 @@ test('identical observation calls separated by user turns are not retry loops', 
   assert.equal(r.signals.find((s) => s.key === 'retry_loops')?.severity ?? 0, 0);
 });
 
-test('identical calls back to back inside one turn still count as a retry loop', () => {
+test('a failing call repeated inside one turn is a retry loop; repeating a call that succeeded is polling', () => {
   const b = new TranscriptBuilder();
-  b.prompt('Take a look at the dashboard.');
-  b.tool('mcp__computer-use__screenshot', {}).tool('mcp__computer-use__screenshot', {}).tool('mcp__computer-use__screenshot', {});
+  b.prompt('Get the tests passing.');
+  for (let i = 0; i < 3; i++) b.tool('Bash', { command: 'npm test' }, { error: true });
   b.prompt('ok');
-  b.tool('mcp__computer-use__screenshot', {});
+  b.tool('Bash', { command: 'npm test' }, { error: true });
+  b.prompt('Wait for App Review to pick up the build.');
+  for (let i = 0; i < 20; i++) b.tool('Bash', { command: 'node scripts/asc.mjs GET /v1/appStoreVersions/1' });
   const { v } = run(b);
-  assert.equal(v.retryRuns, 1);
+  assert.equal(v.retryRunsAll, 1);
+});
+
+test('a long stretch without edits corroborates but never escalates the tier on its own', () => {
+  const b = new TranscriptBuilder();
+  b.prompt('Fix the typo in the README, then walk me through the Play Console.');
+  b.tool('Edit', { file_path: '/tmp/proj/README.md', old_string: 'teh', new_string: 'the' });
+  for (let i = 0; i < 14; i++) { b.tool('mcp__computer-use__screenshot', {}); b.prompt('ok, next screen is up'); }
+  const { v, r } = run(b);
+  assert.equal(v.promptsSinceProgress, 14);
+  assert.equal(r.signals.find((s) => s.key === 'stalled').severity, 1);
+  assert.equal(r.tier, 'healthy');
+});
+
+test('degraded with no memory or volume signal carries on instead of handing off', () => {
+  const b = new TranscriptBuilder();
+  b.prompt('Watch the PR checks until they pass.');
+  for (let i = 0; i < 12; i++) { b.tool('Bash', { command: `gh pr checks 42 # ${i}` }, { error: true }); b.prompt('try again'); }
+  const { r } = run(b);
+  assert.equal(r.tier, 'degraded');
+  assert.equal(r.recommendation.action, 'continue');
+  assert.match(r.recommendation.why, /environment/);
 });
 
 test('thrashing after repeated compaction is critical and recommends handoff, not abandon', () => {
