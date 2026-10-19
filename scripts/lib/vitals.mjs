@@ -118,9 +118,10 @@ export function isCorrection(text) {
 export function isRequest(text) {
   const t = text.trim();
   if (!t || t.startsWith('[') || t.startsWith('/')) return false;
-  if (t.split(/\s+/).length < 2) return false;
+  // Three words: "try again", "go on" and "do it" nudge, they do not name work.
+  if (t.split(/\s+/).length < 3) return false;
   if (REQUEST_OPENER_RE.test(t) || REQUEST_ANYWHERE_RE.test(t)) return true;
-  return /\?\s*$/.test(t) && t.split(/\s+/).length >= 3;
+  return /\?\s*$/.test(t);
 }
 
 // Short imperative lines that read like standing constraints. These are the

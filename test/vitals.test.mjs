@@ -226,7 +226,7 @@ test('formatters produce a one-liner and a report', () => {
 test('isRequest: a request names work; acknowledgements and status replies do not', () => {
   for (const t of ['Now look at the rest of the module and the retry wrapper.', 'ok, set up the Play Console listing next', 'check the open issue please', 'Can you rerun the CI checks', 'what does the hook do on compaction?', "let's move on to the Stripe webhooks", 'fix the build'])
     assert.ok(isRequest(t), t);
-  for (const t of ['8 times within 2 weeks', 'It is granted, has been, and still is', 'last screenshot taken', 'ok, next screen is up', 'continue', 'yes', 'ok?', '[Request interrupted by user]'])
+  for (const t of ['8 times within 2 weeks', 'It is granted, has been, and still is', 'last screenshot taken', 'ok, next screen is up', 'continue', 'yes', 'ok?', 'try again', 'go on', 'do it', '[Request interrupted by user]'])
     assert.ok(!isRequest(t), t);
 });
 
