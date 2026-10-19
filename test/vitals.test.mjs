@@ -44,6 +44,33 @@ test('degraded session: rereads, retry loop, errors, corrections are all detecte
   assert.ok(['handoff', 'abandon'].includes(r.recommendation.action), r.recommendation.action);
 });
 
+test('identical observation calls separated by user turns are not retry loops', () => {
+  const b = new TranscriptBuilder();
+  b.prompt('Walk me through the Stripe dashboard setup.');
+  for (let i = 0; i < 4; i++) {
+    b.tool('mcp__computer-use__screenshot', {}).assistantText('Click Settings next.');
+    b.prompt('ok, next screen is up');
+  }
+  for (let i = 0; i < 4; i++) {
+    b.tool('Bash', { command: 'ls -t ~/dev/screenshots/ | head -1' }).assistantText('Got it.');
+    b.prompt('screenshot taken');
+  }
+  const { v, r } = run(b);
+  assert.equal(v.retryRuns, 0);
+  assert.equal(v.retryRunsAll, 0);
+  assert.equal(r.signals.find((s) => s.key === 'retry_loops')?.severity ?? 0, 0);
+});
+
+test('identical calls back to back inside one turn still count as a retry loop', () => {
+  const b = new TranscriptBuilder();
+  b.prompt('Take a look at the dashboard.');
+  b.tool('mcp__computer-use__screenshot', {}).tool('mcp__computer-use__screenshot', {}).tool('mcp__computer-use__screenshot', {});
+  b.prompt('ok');
+  b.tool('mcp__computer-use__screenshot', {});
+  const { v } = run(b);
+  assert.equal(v.retryRuns, 1);
+});
+
 test('thrashing after repeated compaction is critical and recommends handoff, not abandon', () => {
   const { v, r } = run(thrashingSession());
   assert.equal(v.compactions.length, 2);

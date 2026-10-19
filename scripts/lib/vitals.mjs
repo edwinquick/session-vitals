@@ -166,8 +166,10 @@ export function computeVitals(events, opts = {}) {
   const recentErrorRate = errRate(recentTools);
   const overallErrorRate = errRate(toolUses);
 
-  // Identical consecutive calls: same tool, same input. Retrying the same
-  // failing command is the canonical loop signature.
+  // Identical consecutive calls: same tool, same input, within one turn.
+  // Retrying the same failing command is the canonical loop signature. A
+  // user prompt between two identical calls means the world changed (a
+  // screenshot per "next screen is up"), so that pair is an observation.
   const retryRuns = countRetryRuns(recentTools);
   const retryRunsAll = countRetryRuns(toolUses);
 
@@ -254,9 +256,10 @@ export function computeVitals(events, opts = {}) {
 }
 
 function countRetryRuns(tools) {
+  const same = (a, b) => a.hash === b.hash && a.promptIndex === b.promptIndex;
   let runs = 0;
   for (let i = 1; i < tools.length; i++) {
-    if (tools[i].hash === tools[i - 1].hash && (i === 1 || tools[i - 1].hash !== tools[i - 2].hash)) runs++;
+    if (same(tools[i], tools[i - 1]) && (i === 1 || !same(tools[i - 1], tools[i - 2]))) runs++;
   }
   return runs;
 }
