@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseTranscriptText } from '../scripts/lib/transcript.mjs';
-import { computeVitals, isCorrection, extractConstraintCandidates, shellEditTargets } from '../scripts/lib/vitals.mjs';
+import { computeVitals, isCorrection, isRequest, extractConstraintCandidates, shellEditTargets } from '../scripts/lib/vitals.mjs';
 import { scoreVitals, formatOneLine, formatReport, suggestCommand } from '../scripts/lib/rubric.mjs';
 import { nativeContextWindow } from '../scripts/lib/state.mjs';
 import { healthySession, degradedSession, thrashingSession, TranscriptBuilder } from './fixtures/make-transcript.mjs';
@@ -198,6 +198,24 @@ test('formatters produce a one-liner and a report', () => {
   const { v: hv, r: hr } = run(healthySession());
   const healthy = formatReport(hr, hv, {});
   assert.match(healthy, /^SESSION VITALS: healthy → carry on\n\nNothing showing\./);
+});
+
+test('isRequest: a request names work; acknowledgements and status replies do not', () => {
+  for (const t of ['Now look at the rest of the module and the retry wrapper.', 'ok, set up the Play Console listing next', 'check the open issue please', 'Can you rerun the CI checks', 'what does the hook do on compaction?', "let's move on to the Stripe webhooks", 'fix the build'])
+    assert.ok(isRequest(t), t);
+  for (const t of ['8 times within 2 weeks', 'It is granted, has been, and still is', 'last screenshot taken', 'ok, next screen is up', 'continue', 'yes', 'ok?', '[Request interrupted by user]'])
+    assert.ok(!isRequest(t), t);
+});
+
+test('the current step skips acknowledgements, and is left out when no recent prompt is a request', () => {
+  const b = new TranscriptBuilder();
+  b.prompt('Walk me through the Stripe dashboard setup.');
+  b.prompt('Now set up the webhook endpoint for payouts.');
+  for (const t of ['8 times within 2 weeks', 'It is granted, has been, and still is', 'last screenshot taken']) { b.tool('mcp__computer-use__screenshot', {}); b.prompt(t); }
+  assert.equal(run(b).v.lastRequest, 'Now set up the webhook endpoint for payouts.');
+
+  for (let i = 0; i < 10; i++) { b.tool('mcp__computer-use__screenshot', {}); b.prompt('ok, next screen is up'); }
+  assert.equal(run(b).v.lastRequest, null, 'a request more than 10 prompts back is stale');
 });
 
 test('warnings carry the concrete command for the action, filled in from the record', () => {
