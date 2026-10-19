@@ -33,6 +33,13 @@ const NOT_A_CORRECTION_RE = /^(?:no (?:worries|problem|rush|stress|need|hurry)|n
 // closing tags, are report prose and not rules.
 const CONSTRAINT_RE = /^(never|always|do not|don'?t|must|no matter what|under no circumstances|please (?:never|always|do not|don'?t))\b|(?:^|\b(?:you|please|and|but|also)\s+)(?:must not|must never|should never|never|do not|don'?t) (?:ever )?[a-z]/i;
 const NOT_A_CONSTRAINT_RE = /[`*<>{}|]|^\s*[-#\d.)]|\bI (?:did|applied|found|checked|ran)\b|\bwas\b|\bwere\b|\bis\b .*\bonly\b/i;
+// A request names work: an imperative verb after optional filler ("ok, now
+// set up ..."), a request phrase anywhere, or a question. Acknowledgements and
+// status replies in a guided session ("last screenshot taken", "It is granted")
+// are none of these, so they do not become the current step.
+const REQUEST_FILLER = "(?:(?:ok(?:ay)?|alright|great|good|cool|perfect|thanks|thank you|yes|yep|so|now|next|then|also|and|please)[,.!\\s]+)*";
+const REQUEST_OPENER_RE = new RegExp('^' + REQUEST_FILLER + '(?:add|build|change|check|clean|commit|compare|configure|create|debug|delete|deploy|disable|do|draft|enable|explain|figure|file|find|finish|fix|get|go|help|hook|implement|install|investigate|look|make|merge|migrate|move|open|plan|publish|push|refactor|release|remove|rename|replace|research|rerun|review|rewrite|run|set|ship|show|start|summari[sz]e|switch|test|try|update|upgrade|use|verify|walk|wire|write)\\b', 'i');
+const REQUEST_ANYWHERE_RE = /\b(?:can you|could you|would you|please|let'?s|let us|i want|i'?d like|i need you|we need to|help me|go ahead)\b/i;
 const PROGRESS_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 const READ_TOOLS = new Set(['Read']);
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell']);
@@ -108,6 +115,15 @@ export function isCorrection(text) {
   return false;
 }
 
+export function isRequest(text) {
+  const t = text.trim();
+  if (!t || t.startsWith('[') || t.startsWith('/')) return false;
+  // Three words: "try again", "go on" and "do it" nudge, they do not name work.
+  if (t.split(/\s+/).length < 3) return false;
+  if (REQUEST_OPENER_RE.test(t) || REQUEST_ANYWHERE_RE.test(t)) return true;
+  return /\?\s*$/.test(t);
+}
+
 // Short imperative lines that read like standing constraints. These are the
 // statements that decay hardest under compaction when left as plain user
 // turns (Governance Decay, arXiv 2606.22528), so they are candidates to pin.
@@ -166,8 +182,10 @@ export function computeVitals(events, opts = {}) {
   const recentErrorRate = errRate(recentTools);
   const overallErrorRate = errRate(toolUses);
 
-  // Identical consecutive calls: same tool, same input. Retrying the same
-  // failing command is the canonical loop signature.
+  // Identical consecutive calls after a failure: same tool, same input, within one turn.
+  // Retrying the same failing command is the canonical loop signature. A
+  // user prompt between two identical calls means the world changed (a
+  // screenshot per "next screen is up"), so that pair is an observation.
   const retryRuns = countRetryRuns(recentTools);
   const retryRunsAll = countRetryRuns(toolUses);
 
@@ -248,15 +266,22 @@ export function computeVitals(events, opts = {}) {
     firstPrompt: prompts[0] ? prompts[0].text : null,
     // The latest prompt that states work rather than pushing back or nodding
     // along ("ok", "next"), used to name the current step in suggested commands.
-    lastRequest: [...prompts].reverse().find((p) => !p.correction && !p.text.trimStart().startsWith('/') && p.text.trim().length >= 20)?.text ?? null,
+    // Only the last ten prompts count; past that, the request is stale and the
+    // commands leave the step out for the agent to fill in.
+    lastRequest: prompts.slice(-10).reverse().find((p) => !p.correction && isRequest(p.text))?.text ?? null,
     elapsedMinutes: firstTs && lastTs ? Math.round((lastTs - firstTs) / 60000) : null,
   };
 }
 
+// A retry repeats a call that just failed. Repeating one that succeeded is
+// polling (App Store review status, PR checks) or observing, not a loop.
 function countRetryRuns(tools) {
-  let runs = 0;
+  let runs = 0, inRun = false;
   for (let i = 1; i < tools.length; i++) {
-    if (tools[i].hash === tools[i - 1].hash && (i === 1 || tools[i - 1].hash !== tools[i - 2].hash)) runs++;
+    const prev = tools[i - 1];
+    const retry = prev.isError && tools[i].hash === prev.hash && tools[i].promptIndex === prev.promptIndex;
+    if (retry && !inRun) runs++;
+    inRun = retry;
   }
   return runs;
 }

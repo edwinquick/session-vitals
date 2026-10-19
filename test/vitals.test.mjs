@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseTranscriptText } from '../scripts/lib/transcript.mjs';
-import { computeVitals, isCorrection, extractConstraintCandidates, shellEditTargets } from '../scripts/lib/vitals.mjs';
+import { computeVitals, isCorrection, isRequest, extractConstraintCandidates, shellEditTargets } from '../scripts/lib/vitals.mjs';
 import { scoreVitals, formatOneLine, formatReport, suggestCommand } from '../scripts/lib/rubric.mjs';
 import { nativeContextWindow } from '../scripts/lib/state.mjs';
 import { healthySession, degradedSession, thrashingSession, TranscriptBuilder } from './fixtures/make-transcript.mjs';
@@ -34,14 +34,64 @@ test('healthy session scores healthy and recommends continue', () => {
 test('degraded session: rereads, retry loop, errors, corrections are all detected', () => {
   const { v, r } = run(degradedSession());
   assert.equal(v.rereadFiles.length, 1);
-  assert.ok(v.retryRuns >= 2, `retry runs ${v.retryRuns}`);
+  assert.equal(v.retryRuns, 1, 'the failing npm test repeated; the repeated Reads succeeded and count as rereads instead');
   assert.equal(v.recentCorrections, 2);
   assert.ok(v.recentErrorRate > 0.25);
   assert.ok(v.contextPct > 0.75);
   assert.ok(['degraded', 'critical'].includes(r.tier), r.tier);
-  // Memory signals (corrections at 2, retries at 2) mean compaction would not help.
+  // Memory signals (corrections at 2, a retry loop) mean compaction would not help.
   assert.notEqual(r.recommendation.action, 'compact');
   assert.ok(['handoff', 'abandon'].includes(r.recommendation.action), r.recommendation.action);
+});
+
+test('identical observation calls separated by user turns are not retry loops', () => {
+  const b = new TranscriptBuilder();
+  b.prompt('Walk me through the Stripe dashboard setup.');
+  for (let i = 0; i < 4; i++) {
+    b.tool('mcp__computer-use__screenshot', {}).assistantText('Click Settings next.');
+    b.prompt('ok, next screen is up');
+  }
+  for (let i = 0; i < 4; i++) {
+    b.tool('Bash', { command: 'ls -t ~/dev/screenshots/ | head -1' }).assistantText('Got it.');
+    b.prompt('screenshot taken');
+  }
+  const { v, r } = run(b);
+  assert.equal(v.retryRuns, 0);
+  assert.equal(v.retryRunsAll, 0);
+  assert.equal(r.signals.find((s) => s.key === 'retry_loops')?.severity ?? 0, 0);
+});
+
+test('a failing call repeated inside one turn is a retry loop; repeating a call that succeeded is polling', () => {
+  const b = new TranscriptBuilder();
+  b.prompt('Get the tests passing.');
+  for (let i = 0; i < 3; i++) b.tool('Bash', { command: 'npm test' }, { error: true });
+  b.prompt('ok');
+  b.tool('Bash', { command: 'npm test' }, { error: true });
+  b.prompt('Wait for App Review to pick up the build.');
+  for (let i = 0; i < 20; i++) b.tool('Bash', { command: 'node scripts/asc.mjs GET /v1/appStoreVersions/1' });
+  const { v } = run(b);
+  assert.equal(v.retryRunsAll, 1);
+});
+
+test('a long stretch without edits corroborates but never escalates the tier on its own', () => {
+  const b = new TranscriptBuilder();
+  b.prompt('Fix the typo in the README, then walk me through the Play Console.');
+  b.tool('Edit', { file_path: '/tmp/proj/README.md', old_string: 'teh', new_string: 'the' });
+  for (let i = 0; i < 14; i++) { b.tool('mcp__computer-use__screenshot', {}); b.prompt('ok, next screen is up'); }
+  const { v, r } = run(b);
+  assert.equal(v.promptsSinceProgress, 14);
+  assert.equal(r.signals.find((s) => s.key === 'stalled').severity, 1);
+  assert.equal(r.tier, 'healthy');
+});
+
+test('degraded with no memory or volume signal carries on instead of handing off', () => {
+  const b = new TranscriptBuilder();
+  b.prompt('Watch the PR checks until they pass.');
+  for (let i = 0; i < 12; i++) { b.tool('Bash', { command: `gh pr checks 42 # ${i}` }, { error: true }); b.prompt('try again'); }
+  const { r } = run(b);
+  assert.equal(r.tier, 'degraded');
+  assert.equal(r.recommendation.action, 'continue');
+  assert.match(r.recommendation.why, /environment/);
 });
 
 test('thrashing after repeated compaction is critical and recommends handoff, not abandon', () => {
@@ -171,6 +221,24 @@ test('formatters produce a one-liner and a report', () => {
   const { v: hv, r: hr } = run(healthySession());
   const healthy = formatReport(hr, hv, {});
   assert.match(healthy, /^SESSION VITALS: healthy → carry on\n\nNothing showing\./);
+});
+
+test('isRequest: a request names work; acknowledgements and status replies do not', () => {
+  for (const t of ['Now look at the rest of the module and the retry wrapper.', 'ok, set up the Play Console listing next', 'check the open issue please', 'Can you rerun the CI checks', 'what does the hook do on compaction?', "let's move on to the Stripe webhooks", 'fix the build'])
+    assert.ok(isRequest(t), t);
+  for (const t of ['8 times within 2 weeks', 'It is granted, has been, and still is', 'last screenshot taken', 'ok, next screen is up', 'continue', 'yes', 'ok?', 'try again', 'go on', 'do it', '[Request interrupted by user]'])
+    assert.ok(!isRequest(t), t);
+});
+
+test('the current step skips acknowledgements, and is left out when no recent prompt is a request', () => {
+  const b = new TranscriptBuilder();
+  b.prompt('Walk me through the Stripe dashboard setup.');
+  b.prompt('Now set up the webhook endpoint for payouts.');
+  for (const t of ['8 times within 2 weeks', 'It is granted, has been, and still is', 'last screenshot taken']) { b.tool('mcp__computer-use__screenshot', {}); b.prompt(t); }
+  assert.equal(run(b).v.lastRequest, 'Now set up the webhook endpoint for payouts.');
+
+  for (let i = 0; i < 10; i++) { b.tool('mcp__computer-use__screenshot', {}); b.prompt('ok, next screen is up'); }
+  assert.equal(run(b).v.lastRequest, null, 'a request more than 10 prompts back is stale');
 });
 
 test('warnings carry the concrete command for the action, filled in from the record', () => {
