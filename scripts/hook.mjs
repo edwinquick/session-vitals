@@ -36,7 +36,10 @@ async function main() {
 }
 
 function onSessionStart(input, state) {
-  if (input.startup_reason === 'compact') {
+  // Claude Code sends the start reason as `source` (startup | resume | clear |
+  // compact). `startup_reason` is kept as a fallback for older payload shapes.
+  const src = input.source ?? input.startup_reason;
+  if (src === 'compact') {
     state.compactionsSeen = (state.compactionsSeen || 0) + 1;
     if (state.probe) state.probe.stale = true;
     saveState(state);
@@ -57,7 +60,7 @@ function onSessionStart(input, state) {
     process.stdout.write(lines.join('\n') + '\n');
     return;
   }
-  if (input.startup_reason === 'resume' && state.probe) state.probe.stale = true;
+  if (src === 'resume' && state.probe) state.probe.stale = true;
   saveState(state);
 }
 
