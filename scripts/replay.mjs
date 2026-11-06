@@ -30,7 +30,7 @@ function hook(payload) {
 }
 
 fs.writeFileSync(prefix, '');
-hook({ hook_event_name: 'SessionStart', startup_reason: 'startup' });
+hook({ hook_event_name: 'SessionStart', source: 'startup' });
 
 let promptNo = 0, shown = 0;
 for (let i = 0; i < lines.length; i++) {

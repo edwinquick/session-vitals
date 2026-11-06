@@ -32,7 +32,7 @@ test('hooks: session start, prompts, report cadence, pins survive compaction', (
   fs.writeFileSync(transcript, degradedSession().text());
   const base = { session_id: 'abc', transcript_path: transcript, cwd: '/tmp/proj', model: 'claude-fable-5-1[1m]' };
 
-  assert.equal(hook(env, { ...base, hook_event_name: 'SessionStart', startup_reason: 'startup' }), '');
+  assert.equal(hook(env, { ...base, hook_event_name: 'SessionStart', source: 'startup' }), '');
   const state1 = JSON.parse(fs.readFileSync(path.join(dir, 'sessions', 'abc.json'), 'utf8'));
   assert.equal(state1.contextWindow, 1_000_000);
 
@@ -65,11 +65,17 @@ test('hooks: session start, prompts, report cadence, pins survive compaction', (
   const pin = cli(env, ['pin', 'Never push to main'], '/tmp/proj');
   assert.equal(pin.status, 0, pin.stderr);
   hook(env, { ...base, hook_event_name: 'PreCompact', compact_reason: 'auto' });
-  const reinject = hook(env, { ...base, hook_event_name: 'SessionStart', startup_reason: 'compact' });
+  const reinject = hook(env, { ...base, hook_event_name: 'SessionStart', source: 'compact' });
   assert.match(reinject, /re-injected verbatim/);
   assert.match(reinject, /- Do not touch the database schema\./);
   assert.match(reinject, /- Never push to main/);
   assert.match(reinject, /Original task/);
+  const afterCompact = JSON.parse(fs.readFileSync(path.join(dir, 'sessions', 'abc.json'), 'utf8'));
+  assert.equal(afterCompact.compactionsSeen, 1);
+  // Any other start reason, including a plain startup, must not re-inject.
+  assert.equal(hook(env, { ...base, hook_event_name: 'SessionStart', source: 'startup' }), '');
+  // Older payload shape still recognised.
+  assert.match(hook(env, { ...base, hook_event_name: 'SessionStart', startup_reason: 'compact' }), /re-injected verbatim/);
 
   // Report via CLI finds the state by cwd.
   const rep = cli(env, ['report'], '/tmp/proj');
@@ -83,7 +89,7 @@ test('probe: good answers pass, bad answers register mismatches and change the t
   const transcript = path.join(dir, 't.jsonl');
   fs.writeFileSync(transcript, healthySession().text());
   const base = { session_id: 'p1', transcript_path: transcript, cwd: '/tmp/proj2' };
-  hook(env, { ...base, hook_event_name: 'SessionStart', startup_reason: 'startup' });
+  hook(env, { ...base, hook_event_name: 'SessionStart', source: 'startup' });
   hook(env, { ...base, hook_event_name: 'UserPromptSubmit', user_prompt: 'Add a retry to the upload client. Never change the public API.' });
   cli(env, ['pin', 'Never change the public API'], '/tmp/proj2');
 
@@ -101,6 +107,15 @@ test('probe: good answers pass, bad answers register mismatches and change the t
   const rep = cli(env, ['report'], '/tmp/proj2');
   assert.match(rep.stdout, /^SESSION VITALS: critical → start over from git and the issue/);
   assert.match(rep.stdout, /The retention probe missed 3 items/);
+
+  // Resume and compaction both mark the stored probe stale, so an old result
+  // no longer drives the tier.
+  const stateFile = path.join(dir, 'sessions', 'p1.json');
+  assert.equal(JSON.parse(fs.readFileSync(stateFile, 'utf8')).probe.stale, false);
+  hook(env, { ...base, hook_event_name: 'SessionStart', source: 'resume' });
+  assert.equal(JSON.parse(fs.readFileSync(stateFile, 'utf8')).probe.stale, true);
+  const resumed = cli(env, ['report'], '/tmp/proj2');
+  assert.doesNotMatch(resumed.stdout, /retention probe missed/);
 });
 
 test('task notifications and slash commands are not prompts: no baseline, no pins, no count', () => {
@@ -108,7 +123,7 @@ test('task notifications and slash commands are not prompts: no baseline, no pin
   const transcript = path.join(dir, 't.jsonl');
   fs.writeFileSync(transcript, healthySession().text());
   const base = { session_id: 'tn1', transcript_path: transcript, cwd: '/tmp/proj5' };
-  hook(env, { ...base, hook_event_name: 'SessionStart', startup_reason: 'startup' });
+  hook(env, { ...base, hook_event_name: 'SessionStart', source: 'startup' });
   hook(env, { ...base, hook_event_name: 'UserPromptSubmit', user_prompt: '/session-vitals:vitals' });
   hook(env, { ...base, hook_event_name: 'UserPromptSubmit', user_prompt: '<task-notification>\n<summary>Agent finished</summary>\n<result>**Findings.** Never assert the output. Do not touch the schema.</result>\n</task-notification>' });
   let state = JSON.parse(fs.readFileSync(path.join(dir, 'sessions', 'tn1.json'), 'utf8'));
@@ -125,7 +140,7 @@ test('probe: a detailed paraphrase of a short request passes task recall', () =>
   const transcript = path.join(dir, 't.jsonl');
   fs.writeFileSync(transcript, healthySession().text());
   const base = { session_id: 'pp1', transcript_path: transcript, cwd: '/tmp/proj6' };
-  hook(env, { ...base, hook_event_name: 'SessionStart', startup_reason: 'startup' });
+  hook(env, { ...base, hook_event_name: 'SessionStart', source: 'startup' });
   hook(env, { ...base, hook_event_name: 'UserPromptSubmit', user_prompt: 'scan the repo for slop code and tell me what you find?' });
   const a = path.join(dir, 'a.json');
   fs.writeFileSync(a, JSON.stringify({ task: 'Read-only audit of the moto-platform repo for slop code across Edge Functions, mobile, web and shared, delivered as a ranked findings list with severities.', constraints: [], files: ['src/upload.ts', 'src/upload.test.ts'], lastCorrection: null, nextStep: 'report' }));
@@ -142,7 +157,7 @@ test('CLI finds state written under CLAUDE_PLUGIN_DATA even without that variabl
   const hookEnv = { ...process.env, CLAUDE_PLUGIN_DATA: pluginData, HOME: dir, USERPROFILE: dir };
   delete hookEnv.SESSION_VITALS_HOME;
   const base = { session_id: 'pd1', transcript_path: transcript, cwd: '/tmp/proj3' };
-  hook(hookEnv, { ...base, hook_event_name: 'SessionStart', startup_reason: 'startup' });
+  hook(hookEnv, { ...base, hook_event_name: 'SessionStart', source: 'startup' });
   hook(hookEnv, { ...base, hook_event_name: 'UserPromptSubmit', user_prompt: 'Add a retry to the upload client.' });
   assert.ok(fs.existsSync(path.join(pluginData, 'sessions', 'pd1.json')));
 
@@ -166,7 +181,7 @@ test('1M window is detected from the settings file when the model id lacks the s
   fs.writeFileSync(transcript, healthySession().text());
   const env = { ...process.env, HOME: dir, USERPROFILE: dir, SESSION_VITALS_HOME: path.join(dir, 'sv') };
   delete env.SESSION_VITALS_CONTEXT_WINDOW;
-  hook(env, { session_id: 'w1', transcript_path: transcript, cwd: '/tmp/proj4', model: 'claude-fable-5-1', hook_event_name: 'SessionStart', startup_reason: 'startup' });
+  hook(env, { session_id: 'w1', transcript_path: transcript, cwd: '/tmp/proj4', model: 'claude-fable-5-1', hook_event_name: 'SessionStart', source: 'startup' });
   const state = JSON.parse(fs.readFileSync(path.join(dir, 'sv', 'sessions', 'w1.json'), 'utf8'));
   assert.equal(state.contextWindow, 1_000_000);
 });
@@ -188,14 +203,14 @@ test('a model id seen above 200k is measured against 1M from the next session\'s
 
   // First session crosses 200k: the window it proved is kept in state and learned for the id.
   const first = sessionAt('big', 450_000);
-  hook(env, { ...first, hook_event_name: 'SessionStart', startup_reason: 'startup' });
+  hook(env, { ...first, hook_event_name: 'SessionStart', source: 'startup' });
   assert.equal(readState('big').contextWindow, null);
   hook(env, { ...first, hook_event_name: 'UserPromptSubmit', user_prompt: 'next' });
   assert.equal(readState('big').contextWindow, 1_000_000);
 
   // Second session on the same id sits at 188k: 94% of 200k, but it is a 1M session.
   const second = sessionAt('near', 188_000);
-  hook(env, { ...second, hook_event_name: 'SessionStart', startup_reason: 'startup' });
+  hook(env, { ...second, hook_event_name: 'SessionStart', source: 'startup' });
   assert.equal(readState('near').contextWindow, 1_000_000);
   const out = hook(env, { ...second, hook_event_name: 'UserPromptSubmit', user_prompt: 'next' });
   assert.ok(!/94%|Context is 9\d% full/.test(out), out);
@@ -218,7 +233,7 @@ test('a native-1M model id without "[1m]" at 195k: hook and CLI agree it is not 
     b.prompt('Burn down the review list.').setContext(195_000).assistantText();
     fs.writeFileSync(t, b.text());
     const base = { session_id: id, transcript_path: t, cwd: '/tmp/proj12', ...(payloadModel ? { model: payloadModel } : {}) };
-    hook(env, { ...base, hook_event_name: 'SessionStart', startup_reason: 'startup' });
+    hook(env, { ...base, hook_event_name: 'SessionStart', source: 'startup' });
     const out = hook(env, { ...base, hook_event_name: 'UserPromptSubmit', user_prompt: 'next' });
     const r = cli({ ...env, CLAUDE_CODE_SESSION_ID: id }, ['report', '--json'], '/tmp/proj12');
     assert.equal(r.status, 0, r.stderr);
@@ -249,7 +264,7 @@ test('two sessions in one directory: the CLI acts for its own session id, never 
     const t = path.join(dir, id + '.jsonl');
     fs.writeFileSync(t, transcriptText);
     const base = { session_id: id, transcript_path: t, cwd, model: 'claude-fable-5-1' };
-    hook(env, { ...base, hook_event_name: 'SessionStart', startup_reason: 'startup' });
+    hook(env, { ...base, hook_event_name: 'SessionStart', source: 'startup' });
     hook(env, { ...base, hook_event_name: 'UserPromptSubmit', user_prompt: prompt });
   };
   const readState = (id) => JSON.parse(fs.readFileSync(path.join(dir, 'sessions', id + '.json'), 'utf8'));
