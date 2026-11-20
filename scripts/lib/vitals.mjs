@@ -14,6 +14,7 @@ export const DEFAULTS = {
   recentPromptWindow: 6,
   thrashRefillFraction: 0.5,
   thrashWithinPrompts: 10,
+  thrashWithinToolCalls: 40,
   recentCompactionPrompts: 40,
 };
 
@@ -158,7 +159,7 @@ export function computeVitals(events, opts = {}) {
       case 'prompt': prompts.push({ ts: e.ts, text: e.text, toolIndex: toolUses.length, correction: isCorrection(e.text) }); break;
       case 'tool_use': toolUses.push({ ...e, promptIndex: prompts.length, hash: hashInput(e.name, e.input) }); break;
       case 'tool_result': resultsById.set(e.id, e.isError); break;
-      case 'compact': compactions.push({ ...e, seq, promptIndex: prompts.length }); break;
+      case 'compact': compactions.push({ ...e, seq, promptIndex: prompts.length, toolIndex: toolUses.length }); break;
       case 'usage': usages.push({ ...e, seq, promptIndex: prompts.length }); break;
       case 'api_error': apiErrors++; break;
     }
@@ -225,7 +226,11 @@ export function computeVitals(events, opts = {}) {
   // fill. Counting them as "after" would flag every compaction as thrashing.
   // fastRefill is the leading indicator: the window came back to half full
   // within a few prompts of the last compaction. thrashing is the confirmed
-  // pattern: two compactions within a few prompts of each other.
+  // pattern: two compactions within a few prompts of each other that bought
+  // little work. Prompts alone are not enough: in an autonomous session one
+  // short prompt ("build it", "merge both if green") can carry a hundred tool
+  // calls, and two compactions four prompts apart with 120 calls between them
+  // are a long task, not a refill the work pattern has to change for.
   let fastRefill = false;
   let thrashing = false;
   const lastCompaction = compactions[compactions.length - 1];
@@ -235,7 +240,9 @@ export function computeVitals(events, opts = {}) {
     fastRefill = peakAfter >= o.thrashRefillFraction * scaleWindow;
   }
   for (let i = 1; i < compactions.length; i++) {
-    if (compactions[i].promptIndex - compactions[i - 1].promptIndex <= o.thrashWithinPrompts && prompts.length - compactions[i].promptIndex <= o.recentCompactionPrompts) thrashing = true;
+    const fewPrompts = compactions[i].promptIndex - compactions[i - 1].promptIndex <= o.thrashWithinPrompts;
+    const littleWork = compactions[i].toolIndex - compactions[i - 1].toolIndex <= o.thrashWithinToolCalls;
+    if (fewPrompts && littleWork && prompts.length - compactions[i].promptIndex <= o.recentCompactionPrompts) thrashing = true;
   }
   // Compactions are scored by recency. Six compactions across a week-long
   // session is a heavy session, not a declining one; three in the last forty
