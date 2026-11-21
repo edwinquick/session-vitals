@@ -142,7 +142,7 @@ node scripts/replay.mjs ~/.claude/projects/<project>/<session>.jsonl --window 10
 | `CLAUDE_CODE_SESSION_ID` | set by Claude Code | the session the CLI acts for; `--session <id>` overrides it |
 | `SESSION_VITALS_HOME` | plugin data dir, else `~/.claude/session-vitals` | where per-session state lives. The CLI also searches `~/.claude/plugins/data/session-vitals*`, so it finds hook state without this being set |
 
-Window thresholds (`recentToolWindow`, `recentPromptWindow`, `thrashRefillFraction`, `thrashWithinPrompts`, `recentCompactionPrompts`) can be overridden in `config.json` under that directory.
+Window thresholds (`recentToolWindow`, `recentPromptWindow`, `thrashRefillFraction`, `thrashWithinPrompts`, `thrashWithinToolCalls`, `recentCompactionPrompts`) can be overridden in `config.json` under that directory.
 
 ### Context window
 

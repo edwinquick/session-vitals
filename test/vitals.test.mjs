@@ -103,6 +103,25 @@ test('thrashing after repeated compaction is critical and recommends handoff, no
   assert.match(r.recommendation.why, /subagents/);
 });
 
+test('two compactions a few prompts apart with a long autonomous task between them are not thrashing', () => {
+  // The shape of a real session: four short prompts ("build it", "merge both
+  // if green", "Resume") drove ~120 tool calls between two auto-compactions.
+  const b = new TranscriptBuilder();
+  b.prompt('Build the feature.').setContext(200_000).assistantText().compact('auto', 25_000);
+  for (const p of ['build it into the admin app', 'merge both if green', 'Resume']) {
+    b.prompt(p);
+    for (let i = 0; i < 40; i++) b.tool('Edit', { file_path: `/tmp/proj/f${i}.ts`, old_string: p + i, new_string: 'x' }, { grow: 4_500 });
+    b.assistantText();
+  }
+  b.compact('auto', 22_000);
+  b.prompt('triage ops');
+  b.tool('Read', { file_path: '/tmp/proj/runbook.md' }).assistantText();
+  const { v, r } = run(b);
+  assert.equal(v.compactions.length, 2);
+  assert.equal(v.thrashing, false);
+  assert.notEqual(r.tier, 'critical');
+});
+
 test('a single auto-compaction at peak fill is not thrashing, and old compactions age out', () => {
   const b = new TranscriptBuilder();
   b.prompt('Long task.');
